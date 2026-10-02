@@ -23,6 +23,7 @@ mod config;
 mod copy_mode;
 mod detect;
 mod events;
+mod git_history;
 use ghostty_vt as ghostty;
 mod handoff_runtime;
 mod input;

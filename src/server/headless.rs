@@ -2844,6 +2844,11 @@ impl HeadlessServer {
             return false;
         }
 
+        if matches!(msg.request.method, api::schema::Method::GitHistory(_)) {
+            crate::git_history::start(msg.request, msg.respond_to);
+            return false;
+        }
+
         let frozen_alt_screen_read = match self.alt_screen_read_conflict(&msg.request) {
             AltScreenReadConflict::None => None,
             AltScreenReadConflict::Frozen(snapshot) => Some(snapshot),

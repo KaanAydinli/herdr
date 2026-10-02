@@ -100,6 +100,11 @@ pub(super) struct ShellHitMap {
     pub(super) agent_scroll_metrics: Option<crate::pane::ScrollMetrics>,
     pub(super) agent_max_scroll: usize,
     pub(super) agent_sort_toggle: Rect,
+    pub(super) graph_body: Rect,
+    pub(super) graph_copy: Vec<(Rect, String)>,
+    pub(super) graph_scrollbar: Rect,
+    pub(super) graph_scroll_metrics: Option<crate::pane::ScrollMetrics>,
+    pub(super) graph_max_scroll: usize,
     pub(super) sidebar_divider: Rect,
     pub(super) sidebar_section_divider: Rect,
     pub(super) sidebar_toggle: Rect,
@@ -193,6 +198,9 @@ pub(super) enum ClientChromeDrag {
         grab_row_offset: u16,
     },
     AgentScrollbar {
+        grab_row_offset: u16,
+    },
+    GraphScrollbar {
         grab_row_offset: u16,
     },
     HelpScrollbar {
@@ -618,6 +626,10 @@ impl ClientShellOverlay {
 #[derive(Debug)]
 pub(super) enum PendingEndpointKind {
     Generic,
+    GitHistory {
+        target: super::git_graph::GraphTarget,
+        skip: usize,
+    },
     ProductAnnouncementDismiss {
         version: String,
         id: String,
@@ -883,6 +895,7 @@ pub(crate) struct ClientShellState {
     pub(super) remote_collapsed_groups: HashMap<ClientEndpointId, HashSet<String>>,
     pub(super) workspace_scroll: usize,
     pub(super) agent_scroll: usize,
+    pub(super) git_graph: super::git_graph::GitGraphState,
     pub(super) pending_agent_reveal: Option<(ClientEndpointId, String)>,
     pub(super) tab_scroll: usize,
     pub(super) mobile_switcher_scroll: usize,
@@ -1048,6 +1061,7 @@ impl ClientShellState {
             remote_collapsed_groups,
             workspace_scroll: 0,
             agent_scroll: 0,
+            git_graph: super::git_graph::GitGraphState::default(),
             pending_agent_reveal: None,
             tab_scroll: 0,
             mobile_switcher_scroll: 0,
@@ -1224,6 +1238,7 @@ impl ClientShellState {
     }
 
     pub(super) fn reset_endpoint_projection(&mut self) {
+        self.git_graph = super::git_graph::GitGraphState::default();
         self.hits = ShellHitMap::default();
         self.pane_surface = None;
         self.pending_pane_surface = None;
@@ -1573,6 +1588,7 @@ impl ClientShellState {
             }
         }
         self.snapshot = Some(snapshot);
+        self.sync_git_graph_target();
         self.reconcile_pending_workspace_highlight();
         let pending_surface = self.pending_pane_surface.take();
         if let Some(surface) = pending_surface {

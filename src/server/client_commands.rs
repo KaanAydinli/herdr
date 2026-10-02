@@ -15,6 +15,7 @@ const ENDPOINT_RESPONSE_CHUNK_BYTES: usize = 512 * 1024;
 const CLIENT_SHELL_METHODS: &[&str] = &[
     "client_shell.surface.set",
     "command.invoke",
+    "git.history",
     "integration.install",
     "integration.list",
     "layout.set_split_ratio",
@@ -288,6 +289,10 @@ mod tests {
         )))
         .expect("endpoint method shape fixture");
         let mut actual = endpoint_method_shape_digests();
+        assert_eq!(
+            actual.remove("git.history").as_deref(),
+            Some("0f2098448203618ba3b3fc01a8e2baed2f5f488ef6ca61521c2b4f91cdc83216")
+        );
         // Freeze additive methods separately without rewriting the published fixture.
         assert_eq!(
             actual.remove("pane.clear").as_deref(),

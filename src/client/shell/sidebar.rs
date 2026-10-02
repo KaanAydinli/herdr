@@ -211,50 +211,21 @@ pub(crate) fn render_sidebar(
     } else {
         Rect::new(area.right().saturating_sub(1), area.y, 1, area.height)
     };
-    let (workspace_area, detail_area) =
-        crate::ui::expanded_sidebar_sections(area, state.sidebar_section_split);
-    hits.sidebar_section_divider =
-        crate::ui::sidebar_section_divider_rect(area, state.sidebar_section_split);
-    put_text(
-        buffer,
-        workspace_area.x,
-        workspace_area.y,
-        workspace_area.width,
-        " spaces",
-        Style::default()
-            .fg(palette.overlay0)
-            .add_modifier(Modifier::BOLD),
-    );
-
     let entries = workspace_entries(snapshot, state.collapsed_groups);
-    let body = Rect::new(
-        workspace_area.x,
-        workspace_area.y.saturating_add(WORKSPACE_HEADER_ROWS),
-        workspace_area.width,
-        workspace_area
-            .height
-            .saturating_sub(WORKSPACE_HEADER_ROWS + 1),
-    );
-    hits.workspace_body = body;
-    let row_heights = entries
+    let workspace_tokens = entries
         .iter()
         .map(|entry| {
-            snapshot
-                .workspaces
-                .get(entry.index)
-                .map(|workspace| {
-                    workspace_rows(
-                        workspace,
-                        displayed_workspace_status(snapshot, workspace, state.collapsed_groups),
-                        entry.indented,
-                        &config.spaces,
-                    )
-                    .len()
-                    .max(1)
-                    .min(u16::MAX as usize) as u16
-                })
-                .unwrap_or(1)
+            let workspace = &snapshot.workspaces[entry.index];
+            let status = displayed_workspace_status(snapshot, workspace, state.collapsed_groups);
+            (
+                status,
+                workspace_rows(workspace, status, entry.indented, &config.spaces),
+            )
         })
+        .collect::<Vec<_>>();
+    let row_heights = workspace_tokens
+        .iter()
+        .map(|(_, rows)| rows.len().max(1).min(u16::MAX as usize) as u16)
         .collect::<Vec<_>>();
     let gaps = entries
         .iter()
@@ -265,6 +236,48 @@ pub(crate) fn render_sidebar(
                 .map_or(0, |next| u16::from(!next.indented) * config.spaces.row_gap)
         })
         .collect::<Vec<_>>();
+    let agent_rows = super::super::agent_sidebar::agent_rows(snapshot, config, None);
+    let agent_height = agent_content_height(
+        agent_rows.iter().map(|row| row.rows.len()),
+        config.agents.row_gap,
+    );
+    let footer_height = 2u16.saturating_add(config.spaces.row_gap);
+    let sections = super::super::sidebar_layout::sections(
+        area,
+        WORKSPACE_HEADER_ROWS
+            .saturating_add(super::super::sidebar_layout::list_height(
+                &row_heights,
+                &gaps,
+            ))
+            .saturating_add(footer_height),
+        agent_height,
+        WORKSPACE_HEADER_ROWS
+            .saturating_add(footer_height)
+            .saturating_add(1),
+        true,
+    );
+    let workspace_area = sections.spaces;
+    put_text(
+        buffer,
+        workspace_area.x,
+        workspace_area.y,
+        workspace_area.width,
+        " spaces",
+        Style::default()
+            .fg(palette.overlay0)
+            .add_modifier(Modifier::BOLD),
+    );
+    let body = Rect::new(
+        workspace_area.x,
+        workspace_area
+            .y
+            .saturating_add(WORKSPACE_HEADER_ROWS.min(workspace_area.height)),
+        workspace_area.width,
+        workspace_area
+            .height
+            .saturating_sub(WORKSPACE_HEADER_ROWS.saturating_add(footer_height)),
+    );
+    hits.workspace_body = body;
     let mut metrics = super::scroll::list_scroll_metrics(
         &row_heights,
         &gaps,
@@ -299,12 +312,17 @@ pub(crate) fn render_sidebar(
     let show_scrollbar = metrics.max_offset_from_bottom > 0 && body.width > 1;
     let content_width = body.width.saturating_sub(u16::from(show_scrollbar));
     let mut y = body.y;
-    for (entry_position, entry) in entries.iter().enumerate().skip(*state.workspace_scroll) {
+    for (entry_position, entry) in entries
+        .iter()
+        .enumerate()
+        .skip(*state.workspace_scroll)
+        .take(if body.is_empty() { 0 } else { usize::MAX })
+    {
         let Some(workspace) = snapshot.workspaces.get(entry.index) else {
             continue;
         };
-        let status = displayed_workspace_status(snapshot, workspace, state.collapsed_groups);
-        let rows = workspace_rows(workspace, status, entry.indented, &config.spaces);
+        let (status, rows) = &workspace_tokens[entry_position];
+        let status = *status;
         let row_height = (rows.len().max(1).min(u16::MAX as usize) as u16).min(body.height);
         if y.saturating_add(row_height) > body.bottom() {
             break;
@@ -361,6 +379,13 @@ pub(crate) fn render_sidebar(
         super::scroll::render_list_scrollbar(buffer, track, metrics, palette);
     }
 
+    render_space_controls(
+        buffer,
+        workspace_area,
+        super::super::global_menu::global_menu_attention(snapshot),
+        config,
+        hits,
+    );
     if let Some(row) = state.workspace_drop_indicator_row.filter(|row| {
         *row >= workspace_area.y.saturating_add(1)
             && *row < workspace_area.bottom().saturating_sub(1)
@@ -375,81 +400,94 @@ pub(crate) fn render_sidebar(
         );
     }
 
-    let footer_y = workspace_area.bottom().saturating_sub(1);
-    if config.mouse_capture {
-        hits.new_workspace = Rect::new(
-            workspace_area.x,
-            footer_y,
-            5.min(workspace_area.width),
-            u16::from(workspace_area.height > 0),
-        );
-        put_text(
-            buffer,
-            workspace_area.x,
-            footer_y,
-            workspace_area.width,
-            " new",
-            Style::default().fg(palette.overlay0),
-        );
-        let attention = super::super::global_menu::global_menu_attention(snapshot);
-        let launcher_width = if attention { 8 } else { 6 }.min(workspace_area.width);
-        hits.global_launcher = Rect::new(
-            workspace_area.right().saturating_sub(launcher_width),
-            footer_y,
-            launcher_width,
-            1,
-        );
-        if attention {
-            let start_x = workspace_area.right().saturating_sub(6);
-            put_text(
-                buffer,
-                start_x,
-                footer_y,
-                2,
-                "● ",
-                Style::default()
-                    .fg(palette.accent)
-                    .add_modifier(Modifier::BOLD),
-            );
-            put_text(
-                buffer,
-                start_x.saturating_add(2),
-                footer_y,
-                4,
-                "menu",
-                Style::default().fg(palette.overlay0),
-            );
-        } else {
-            put_right_text(
-                buffer,
-                workspace_area,
-                footer_y,
-                "menu",
-                Style::default().fg(palette.overlay0),
-            );
-        }
-    }
-
     super::render_agent_panel(
         buffer,
-        detail_area,
+        sections.agents,
         snapshot,
+        &agent_rows,
         config,
         state.agent_scroll,
         hits,
     );
+    super::super::git_graph::render(buffer, sections.graph, state.graph, config, hits);
+}
 
-    hits.sidebar_toggle = Rect::new(
-        area.right().saturating_sub(2),
-        area.bottom().saturating_sub(1),
-        u16::from(area.width > 1),
-        u16::from(area.height > 0),
-    );
+pub(in crate::client::shell) fn agent_content_height(
+    rows: impl Iterator<Item = usize>,
+    gap: u16,
+) -> u16 {
+    let mut count = 0usize;
+    let height = rows.fold(0u16, |height, lines| {
+        count += 1;
+        height
+            .saturating_add(lines.max(1).min(u16::MAX as usize) as u16)
+            .saturating_add(gap)
+    });
+    3u16.saturating_add(if count == 0 {
+        1
+    } else {
+        height.saturating_sub(gap)
+    })
+}
+
+pub(in crate::client::shell) fn render_space_controls(
+    buffer: &mut Buffer,
+    area: Rect,
+    attention: bool,
+    config: &ClientShellConfig,
+    hits: &mut ShellHitMap,
+) {
+    if area.is_empty() || area.height < WORKSPACE_HEADER_ROWS + 2 {
+        return;
+    }
+    let palette = &config.palette;
+    let footer_y = area.bottom() - 1;
+    let tile = Rect::new(area.x, footer_y - 1, area.width, 1);
+    buffer.set_style(tile, Style::default().bg(palette.surface0));
     put_text(
         buffer,
-        hits.sidebar_toggle.x,
-        hits.sidebar_toggle.y,
-        hits.sidebar_toggle.width,
+        tile.x + (tile.width - 1) / 2,
+        tile.y,
+        1,
+        "+",
+        Style::default()
+            .fg(palette.accent)
+            .bg(palette.surface0)
+            .add_modifier(Modifier::BOLD),
+    );
+    hits.new_workspace = if config.mouse_capture {
+        tile
+    } else {
+        Rect::default()
+    };
+    let launcher_width = if attention { 8 } else { 6 }.min(area.width.saturating_sub(1));
+    if config.mouse_capture {
+        hits.global_launcher =
+            Rect::new(area.right() - launcher_width, footer_y, launcher_width, 1);
+    }
+    put_right_text(
+        buffer,
+        area,
+        footer_y,
+        if attention { "● menu" } else { "menu" },
+        Style::default().fg(palette.overlay0),
+    );
+    if attention && area.width >= 6 {
+        put_text(
+            buffer,
+            area.right() - 6,
+            footer_y,
+            1,
+            "●",
+            Style::default().fg(palette.accent),
+        );
+    }
+    hits.sidebar_toggle = Rect::new(area.x, footer_y, 1, 1);
+    put_text(
+        buffer,
+        area.x,
+        footer_y,
+        1,
         "«",
         Style::default().fg(palette.overlay0),
     );
@@ -695,7 +733,7 @@ pub(in crate::client::shell) fn render_workspace_rows(
     status: crate::api::schema::AgentStatus,
     indicators: crate::config::StatusIndicatorStyle,
     entry: &WorkspaceEntry,
-    rows: Vec<Vec<crate::ui::ResolvedToken>>,
+    rows: &[Vec<crate::ui::ResolvedToken>],
     focused: bool,
     selected: bool,
     navigating: bool,

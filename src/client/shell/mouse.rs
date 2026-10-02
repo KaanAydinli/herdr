@@ -511,7 +511,7 @@ impl ClientShellState {
     fn workspace_drop_target_at(&self, point: (u16, u16)) -> Option<(Option<String>, u16)> {
         if self.hits.workspace_body.height == 0
             || point.1 < self.hits.workspace_body.y.saturating_sub(1)
-            || point.1 >= self.hits.new_workspace.y
+            || point.1 > self.hits.new_workspace.y
             || self.hits.workspaces.iter().any(|hit| {
                 hit.endpoint_id != self.active_endpoint_id && super::contains(hit.rect, point)
             })
@@ -573,7 +573,7 @@ impl ClientShellState {
                     .map(|workspace| workspace.workspace_id.clone())
             });
             let row = last_hit.rect.bottom();
-            if row < self.hits.new_workspace.y {
+            if row <= self.hits.new_workspace.y {
                 slots.push((before, row));
             }
         }
@@ -1057,6 +1057,22 @@ impl ClientShellState {
                     }
                     return;
                 }
+                Some(ClientChromeDrag::GraphScrollbar { grab_row_offset }) => {
+                    if let Some(metrics) = self.hits.graph_scroll_metrics {
+                        let offset = crate::ui::scrollbar_offset_from_drag_row(
+                            metrics,
+                            self.hits.graph_scrollbar,
+                            mouse.row,
+                            *grab_row_offset,
+                        );
+                        let next = metrics.max_offset_from_bottom.saturating_sub(offset);
+                        if next != self.git_graph.scroll {
+                            self.git_graph.scroll = next;
+                            outcome.repaint = true;
+                        }
+                    }
+                    return;
+                }
                 Some(ClientChromeDrag::NavigatorScrollbar { grab_row_offset }) => {
                     if let Some(metrics) = self.hits.navigator_scroll_metrics {
                         let offset = crate::ui::scrollbar_offset_from_drag_row(
@@ -1357,6 +1373,7 @@ impl ClientShellState {
                     }
                     ClientChromeDrag::WorkspaceScrollbar { .. }
                     | ClientChromeDrag::AgentScrollbar { .. }
+                    | ClientChromeDrag::GraphScrollbar { .. }
                     | ClientChromeDrag::HelpScrollbar { .. }
                     | ClientChromeDrag::NavigatorScrollbar { .. }
                     | ClientChromeDrag::ProductAnnouncementScrollbar { .. }
@@ -1907,6 +1924,24 @@ impl ClientShellState {
                     outcome.repaint = true;
                 }
             }
+            MouseEventKind::ScrollUp if super::contains(self.hits.graph_body, point) => {
+                let next = self.git_graph.scroll.saturating_sub(1);
+                if next != self.git_graph.scroll {
+                    self.git_graph.scroll = next;
+                    outcome.repaint = true;
+                }
+            }
+            MouseEventKind::ScrollDown if super::contains(self.hits.graph_body, point) => {
+                let next = self
+                    .git_graph
+                    .scroll
+                    .saturating_add(1)
+                    .min(self.hits.graph_max_scroll);
+                if next != self.git_graph.scroll {
+                    self.git_graph.scroll = next;
+                    outcome.repaint = true;
+                }
+            }
             MouseEventKind::ScrollUp if super::contains(self.hits.workspace_body, point) => {
                 let next = self.workspace_scroll.saturating_sub(1);
                 if next != self.workspace_scroll {
@@ -2007,6 +2042,42 @@ impl ClientShellState {
                             }
                         }
                     }
+                    return;
+                }
+                if super::contains(self.hits.graph_scrollbar, point) {
+                    if let Some(metrics) = self.hits.graph_scroll_metrics {
+                        if let Some(grab_row_offset) = crate::ui::scrollbar_thumb_grab_offset(
+                            metrics,
+                            self.hits.graph_scrollbar,
+                            mouse.row,
+                        ) {
+                            self.chrome_drag =
+                                Some(ClientChromeDrag::GraphScrollbar { grab_row_offset });
+                        } else {
+                            let offset = crate::ui::scrollbar_offset_from_row(
+                                metrics,
+                                self.hits.graph_scrollbar,
+                                mouse.row,
+                            );
+                            let next = metrics.max_offset_from_bottom.saturating_sub(offset);
+                            if next != self.git_graph.scroll {
+                                self.git_graph.scroll = next;
+                                outcome.repaint = true;
+                            }
+                        }
+                    }
+                    return;
+                }
+                if let Some((_, id)) = self
+                    .hits
+                    .graph_copy
+                    .iter()
+                    .find(|(rect, _)| super::contains(*rect, point))
+                {
+                    outcome
+                        .actions
+                        .push(ClientShellAction::ClipboardWrite(id.as_bytes().to_vec()));
+                    outcome.repaint |= self.show_copy_feedback(std::time::Instant::now());
                     return;
                 }
                 if super::contains(self.hits.agent_sort_toggle, point) {

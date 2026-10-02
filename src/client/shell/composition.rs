@@ -67,7 +67,7 @@ impl ClientShellState {
             reveal_focused_workspace: &mut self.reveal_focused_workspace,
             reveal_focused_tab: &mut self.reveal_focused_tab,
             sidebar_collapsed: false,
-            sidebar_section_split: self.sidebar_section_split,
+            graph: &mut self.git_graph,
             tab_drag_insert_index: None,
             selected_workspace_id: self
                 .navigate_workspace_id
@@ -223,7 +223,7 @@ impl ClientShellState {
                 reveal_focused_workspace: &mut self.reveal_focused_workspace,
                 reveal_focused_tab: &mut self.reveal_focused_tab,
                 sidebar_collapsed: self.sidebar_collapsed,
-                sidebar_section_split: self.sidebar_section_split,
+                graph: &mut self.git_graph,
                 tab_drag_insert_index,
                 selected_workspace_id: self
                     .navigate_workspace_id

@@ -311,6 +311,10 @@ The active palette is applied in this order: built-in theme, `[theme.custom]`, t
 
 The sidebar is the main Herdr dashboard. Search `ui.` in the [Config reference](/docs/config-reference/) for sizing, collapsed mode, Agent panel ordering, mouse behavior, pane borders, and other presentation settings.
 
+In the expanded desktop sidebar, Spaces and Agents fit their visible contents. The centered **+** tile creates a space, with **menu** directly below it. Agents follow Spaces, and **Graph** uses the remaining height. Long lists scroll independently; short terminals prioritize spaces and agents. Drag the outer sidebar edge to change its width.
+
+Graph follows the focused pane's repository and shows the current commit's ancestry, including merge connections. Each entry has a short commit ID, a title clipped to the available width, and a **⧉** button for copying the full ID. Added and deleted text lines are shown separately; binary files are counted separately. Merge counts compare against the first parent. Scroll to load older commits. History refreshes in the background when viewing the top, and remains available while you scroll. Remote servers need to advertise `git.history` to provide the graph.
+
 `ui.pane_borders` accepts `"auto"` (the default, borders only for split panes), `"always"` (also frame a single pane), or `"off"`. A single-pane frame requires `ui.pane_outer_borders = true`, because all its edges are outer edges. Existing boolean values remain valid: `true` means `"auto"` and `false` means `"off"`.
 
 Set `tab_bar_position = "bottom"` under `[ui]` to place the desktop tab row below the terminal panes. Prefix, Navigate, Copy, and Resize mode bars temporarily replace the bottom tab row while active. The default is `"top"`.

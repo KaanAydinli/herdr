@@ -2151,6 +2151,44 @@
           ],
           "type": "object"
         },
+        "GitHistoryParams": {
+          "properties": {
+            "cwd": {
+              "type": "string"
+            },
+            "known_head": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "limit": {
+              "default": 100,
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "revision": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "skip": {
+              "default": 0,
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "cwd"
+          ],
+          "type": "object"
+        },
         "IntegrationInstallParams": {
           "properties": {
             "target": {
@@ -4924,6 +4962,22 @@
         {
           "properties": {
             "method": {
+              "const": "git.history",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/GitHistoryParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "workspace.create",
               "type": "string"
             },
@@ -7485,6 +7539,74 @@
           ],
           "type": "string"
         },
+        "GitCommit": {
+          "properties": {
+            "additions": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "binary_files": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "deletions": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "parents": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "subject": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "parents",
+            "subject",
+            "additions",
+            "deletions",
+            "binary_files"
+          ],
+          "type": "object"
+        },
+        "GitHistory": {
+          "properties": {
+            "commits": {
+              "items": {
+                "$ref": "#/schemas/success_response/$defs/GitCommit"
+              },
+              "type": "array"
+            },
+            "has_more": {
+              "type": "boolean"
+            },
+            "head": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unchanged": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "commits",
+            "has_more",
+            "unchanged"
+          ],
+          "type": "object"
+        },
         "InstalledPluginInfo": {
           "properties": {
             "actions": {
@@ -9167,6 +9289,22 @@
         },
         "ResponseResult": {
           "oneOf": [
+            {
+              "properties": {
+                "history": {
+                  "$ref": "#/schemas/success_response/$defs/GitHistory"
+                },
+                "type": {
+                  "const": "git_history",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "history"
+              ],
+              "type": "object"
+            },
             {
               "properties": {
                 "capabilities": {

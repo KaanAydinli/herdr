@@ -276,22 +276,9 @@ fn client_owned_sidebar_dividers_resize_live() {
     assert!(recovered_text.contains(" spaces"));
     assert!(recovered_text.contains("LIVE"));
     assert!(!state.hits.panes.is_empty());
-    let section_divider = state.hits.sidebar_section_divider;
-    state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left),
-        column: section_divider.x + 2,
-        row: section_divider.y,
-        modifiers: KeyModifiers::empty(),
-    })]);
-    let split = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
-        kind: MouseEventKind::Drag(MouseButton::Left),
-        column: section_divider.x + 2,
-        row: 20,
-        modifiers: KeyModifiers::empty(),
-    })]);
-    assert!(state.sidebar_section_split > 0.6);
-    assert!(split.repaint);
-    assert!(!split.resize);
+    assert!(state.hits.sidebar_section_divider.is_empty());
+    assert_eq!(state.hits.global_launcher.y + 4, state.hits.agent_body.y);
+    assert!(state.hits.graph_body.y >= state.hits.agent_body.bottom());
 }
 
 #[test]

@@ -46,8 +46,7 @@ pub(super) fn render_expanded(
     buffer: &mut Buffer,
     area: Rect,
     agent_view_label: Option<&str>,
-    endpoints: &[ClientShellEndpoint],
-    active_endpoint_id: &ClientEndpointId,
+    rows: &[EndpointAgentRow],
     config: &ClientShellConfig,
     agent_scroll: &mut usize,
     hits: &mut ShellHitMap,
@@ -61,12 +60,15 @@ pub(super) fn render_expanded(
     ) {
         return;
     }
-    let rows = agent_rows(endpoints, active_endpoint_id, config);
     super::agent_sidebar::render_agent_list(
         buffer,
         area,
-        &rows,
-        agent_view_label.map(|_| " no matching agents"),
+        rows,
+        Some(if agent_view_label.is_some() {
+            " no matching agents"
+        } else {
+            " no agents"
+        }),
         config,
         agent_scroll,
         hits,
@@ -122,14 +124,14 @@ impl ClientShellState {
     }
 }
 
-struct EndpointAgentRow {
+pub(super) struct EndpointAgentRow {
     endpoint_id: ClientEndpointId,
     machine_label: String,
     stale: bool,
-    agent: super::agent_sidebar::AgentRow,
+    pub(super) agent: super::agent_sidebar::AgentRow,
 }
 
-fn agent_rows(
+pub(super) fn agent_rows(
     endpoints: &[ClientShellEndpoint],
     active_endpoint_id: &ClientEndpointId,
     config: &ClientShellConfig,

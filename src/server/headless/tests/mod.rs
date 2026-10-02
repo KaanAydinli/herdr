@@ -1,6 +1,7 @@
 use super::*;
 
 mod event_fairness;
+mod git_history;
 mod native_graphics;
 #[path = "pane_move.rs"]
 mod pane_move_tests;

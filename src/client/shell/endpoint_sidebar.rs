@@ -249,21 +249,6 @@ pub(super) fn render_expanded(
     } else {
         Rect::new(area.right().saturating_sub(1), area.y, 1, area.height)
     };
-    let (workspace_area, detail_area) =
-        crate::ui::expanded_sidebar_sections(area, state.sidebar_section_split);
-    hits.sidebar_section_divider =
-        crate::ui::sidebar_section_divider_rect(area, state.sidebar_section_split);
-    put_text(
-        buffer,
-        workspace_area.x,
-        workspace_area.y,
-        workspace_area.width,
-        " machines",
-        Style::default()
-            .fg(palette.overlay0)
-            .add_modifier(Modifier::BOLD),
-    );
-
     let empty_collapsed_groups = HashSet::new();
 
     enum Row {
@@ -292,46 +277,39 @@ pub(super) fn render_expanded(
             );
         }
     }
-    let body = Rect::new(
-        workspace_area.x,
-        workspace_area.y.saturating_add(WORKSPACE_HEADER_ROWS),
-        workspace_area.width,
-        workspace_area
-            .height
-            .saturating_sub(WORKSPACE_HEADER_ROWS + 1),
-    );
-    hits.workspace_body = body;
-    let row_heights = rows
+    let workspace_tokens = rows
         .iter()
         .map(|row| match row {
-            Row::Endpoint(_) => 1,
+            Row::Endpoint(_) => None,
             Row::Workspace { endpoint, entry } => {
                 let endpoint = &state.endpoints[*endpoint];
+                let snapshot = endpoint.snapshot.as_deref()?;
+                let workspace = snapshot.workspaces.get(entry.index)?;
                 let collapsed_groups = collapsed_groups_for_endpoint(state, &endpoint.endpoint_id)
                     .unwrap_or(&empty_collapsed_groups);
-                endpoint
-                    .snapshot
-                    .as_deref()
-                    .and_then(|snapshot| {
-                        let workspace = snapshot.workspaces.get(entry.index)?;
-                        Some(
-                            super::sidebar::workspace_rows(
-                                workspace,
-                                super::sidebar::displayed_workspace_status(
-                                    snapshot,
-                                    workspace,
-                                    collapsed_groups,
-                                ),
-                                entry.indented,
-                                &config.spaces,
-                            )
-                            .len()
-                            .max(1)
-                            .min(u16::MAX as usize) as u16,
-                        )
-                    })
-                    .unwrap_or(1)
+                let status = super::sidebar::displayed_workspace_status(
+                    snapshot,
+                    workspace,
+                    collapsed_groups,
+                );
+                Some((
+                    status,
+                    super::sidebar::workspace_rows(
+                        workspace,
+                        status,
+                        entry.indented,
+                        &config.spaces,
+                    ),
+                ))
             }
+        })
+        .collect::<Vec<_>>();
+    let row_heights = workspace_tokens
+        .iter()
+        .map(|tokens| {
+            tokens.as_ref().map_or(1, |(_, rows)| {
+                rows.len().max(1).min(u16::MAX as usize) as u16
+            })
         })
         .collect::<Vec<_>>();
     let gaps = rows
@@ -348,6 +326,46 @@ pub(super) fn render_expanded(
             _ => 0,
         })
         .collect::<Vec<_>>();
+    let agent_rows =
+        super::endpoint_agents::agent_rows(state.endpoints, state.active_endpoint_id, config);
+    let agent_height = super::sidebar::agent_content_height(
+        agent_rows.iter().map(|row| row.agent.rows.len()),
+        config.agents.row_gap,
+    );
+    let footer_height = 2u16.saturating_add(config.spaces.row_gap);
+    let sections = super::sidebar_layout::sections(
+        area,
+        WORKSPACE_HEADER_ROWS
+            .saturating_add(super::sidebar_layout::list_height(&row_heights, &gaps))
+            .saturating_add(footer_height),
+        agent_height,
+        WORKSPACE_HEADER_ROWS
+            .saturating_add(footer_height)
+            .saturating_add(1),
+        active_snapshot.is_some(),
+    );
+    let workspace_area = sections.spaces;
+    put_text(
+        buffer,
+        workspace_area.x,
+        workspace_area.y,
+        workspace_area.width,
+        " machines",
+        Style::default()
+            .fg(palette.overlay0)
+            .add_modifier(Modifier::BOLD),
+    );
+    let body = Rect::new(
+        workspace_area.x,
+        workspace_area
+            .y
+            .saturating_add(WORKSPACE_HEADER_ROWS.min(workspace_area.height)),
+        workspace_area.width,
+        workspace_area
+            .height
+            .saturating_sub(WORKSPACE_HEADER_ROWS.saturating_add(footer_height)),
+    );
+    hits.workspace_body = body;
     let reveal_navigation = !body.is_empty() && std::mem::take(state.reveal_navigation_workspace);
     let reveal_focus = !body.is_empty() && std::mem::take(state.reveal_focused_workspace);
     if reveal_navigation || reveal_focus {
@@ -442,17 +460,10 @@ pub(super) fn render_expanded(
                 };
                 let collapsed_groups = collapsed_groups_for_endpoint(state, &endpoint.endpoint_id)
                     .unwrap_or(&empty_collapsed_groups);
-                let status = super::sidebar::displayed_workspace_status(
-                    snapshot,
-                    workspace,
-                    collapsed_groups,
-                );
-                let tokens = super::sidebar::workspace_rows(
-                    workspace,
-                    status,
-                    entry.indented,
-                    &config.spaces,
-                );
+                let Some((status, tokens)) = &workspace_tokens[row_index] else {
+                    continue;
+                };
+                let status = *status;
                 let height = (tokens.len().max(1).min(u16::MAX as usize) as u16).min(body.height);
                 if y.saturating_add(height) > body.bottom() {
                     break;
@@ -516,75 +527,23 @@ pub(super) fn render_expanded(
         super::scroll::render_list_scrollbar(buffer, track, metrics, palette);
     }
 
-    let footer_y = workspace_area.bottom().saturating_sub(1);
-    if config.mouse_capture {
-        let label = format!(" new · {}", active_endpoint_label(state));
-        hits.new_workspace = Rect::new(
-            workspace_area.x,
-            footer_y,
-            display_width(&label).min(workspace_area.width),
-            u16::from(workspace_area.height > 0),
-        );
-        put_text(
-            buffer,
-            workspace_area.x,
-            footer_y,
-            workspace_area.width,
-            &label,
-            Style::default().fg(palette.overlay0),
-        );
-        let attention = active_snapshot.is_some_and(super::global_menu::global_menu_attention);
-        let width = if attention { 8 } else { 6 }.min(workspace_area.width);
-        hits.global_launcher = Rect::new(
-            workspace_area.right().saturating_sub(width),
-            footer_y,
-            width,
-            1,
-        );
-        put_right_text(
-            buffer,
-            workspace_area,
-            footer_y,
-            if attention { "● menu" } else { "menu" },
-            Style::default().fg(if attention {
-                palette.accent
-            } else {
-                palette.overlay0
-            }),
-        );
-    }
+    super::sidebar::render_space_controls(
+        buffer,
+        workspace_area,
+        active_snapshot.is_some_and(super::global_menu::global_menu_attention),
+        config,
+        hits,
+    );
     super::endpoint_agents::render_expanded(
         buffer,
-        detail_area,
+        sections.agents,
         active_snapshot.and_then(|snapshot| snapshot.agent_view_label.as_deref()),
-        state.endpoints,
-        state.active_endpoint_id,
+        &agent_rows,
         config,
         state.agent_scroll,
         hits,
     );
-    hits.sidebar_toggle = Rect::new(
-        area.right().saturating_sub(2),
-        area.bottom().saturating_sub(1),
-        u16::from(area.width > 1),
-        u16::from(area.height > 0),
-    );
-    put_text(
-        buffer,
-        hits.sidebar_toggle.x,
-        hits.sidebar_toggle.y,
-        hits.sidebar_toggle.width,
-        "«",
-        Style::default().fg(palette.overlay0),
-    );
-}
-
-fn active_endpoint_label<'a>(state: &'a ShellRenderState<'_>) -> &'a str {
-    state
-        .endpoints
-        .iter()
-        .find(|endpoint| &endpoint.endpoint_id == state.active_endpoint_id)
-        .map_or("Local", |endpoint| endpoint.label.as_str())
+    super::git_graph::render(buffer, sections.graph, state.graph, config, hits);
 }
 
 fn render_endpoint_row(

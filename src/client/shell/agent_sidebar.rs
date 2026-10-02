@@ -53,6 +53,7 @@ pub(super) fn render_agent_panel(
     buffer: &mut Buffer,
     area: Rect,
     snapshot: &ClientShellSnapshot,
+    rows: &[AgentRow],
     config: &ClientShellConfig,
     agent_scroll: &mut usize,
     hits: &mut ShellHitMap,
@@ -67,15 +68,15 @@ pub(super) fn render_agent_panel(
         return;
     }
 
-    let rows = agent_rows(snapshot, config, None);
     render_agent_list(
         buffer,
         area,
-        &rows,
-        snapshot
-            .agent_view_label
-            .as_ref()
-            .map(|_| " no matching agents"),
+        rows,
+        Some(if snapshot.agent_view_label.is_some() {
+            " no matching agents"
+        } else {
+            " no agents"
+        }),
         config,
         agent_scroll,
         hits,
