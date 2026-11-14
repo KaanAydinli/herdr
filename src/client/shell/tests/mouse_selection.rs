@@ -338,7 +338,7 @@ fn client_double_click_selects_word_and_copies_only_after_release() {
             );
             let copied = word_row_reply(&mut state, &word_read_id(&actions), "bravo");
             assert!(
-                matches!(&copied[..], [ClientShellAction::ClipboardWrite(bytes)] if bytes == b"bravo")
+                matches!(&copied[..], [ClientShellAction::PrimarySelectionWrite(primary), ClientShellAction::ClipboardWrite(bytes)] if primary == b"bravo" && bytes == b"bravo")
             );
             assert!(state.tick_copy_feedback(state.selection_highlight_clear_deadline.unwrap()));
             assert!(state.selection.is_none());
@@ -505,8 +505,8 @@ fn double_click_drag_waits_for_latest_row_before_copying() {
             "bravo charlie\ndelta echo foxtrot\ngolf hotel",
         );
         assert!(
-            matches!(&copied[..], [ClientShellAction::ClipboardWrite(bytes)]
-            if bytes == b"bravo charlie\ndelta echo foxtrot\ngolf hotel")
+            matches!(&copied[..], [ClientShellAction::PrimarySelectionWrite(primary), ClientShellAction::ClipboardWrite(bytes)]
+            if primary == b"bravo charlie\ndelta echo foxtrot\ngolf hotel" && bytes == b"bravo charlie\ndelta echo foxtrot\ngolf hotel")
         );
     }
 }
@@ -1158,4 +1158,171 @@ fn context_menu_keyboard_and_outside_click_are_client_owned() {
         })]);
     assert!(outside.repaint);
     assert!(state.overlay.is_none());
+}
+
+fn middle_click_at(rect: Rect) -> RawInputEvent {
+    RawInputEvent::Mouse(crossterm::event::MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Middle),
+        column: rect.x + 2,
+        row: rect.y + 1,
+        modifiers: KeyModifiers::empty(),
+    })
+}
+
+#[test]
+fn middle_click_pastes_last_copied_selection_into_pane_without_mouse_reporting() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.compose(106, 20).expect("composed frame");
+    let pane = state.hits.panes[0].clone();
+    assert!(!pane.mouse_reporting);
+
+    let empty = state.handle_raw_events(vec![middle_click_at(pane.inner_rect)]);
+    assert!(empty.requests.is_empty());
+
+    state.last_copied_selection = Some("echo herdr".into());
+    let pasted = state.handle_raw_events(vec![middle_click_at(pane.inner_rect)]);
+    assert!(matches!(
+        &pasted.requests[..],
+        [ClientMessage::ClientShellPaneInput { pane_id, events }]
+            if pane_id == "pane_1"
+                && matches!(&events[..], [ClientPaneInputEvent::Paste(text)] if text == "echo herdr")
+    ));
+    let release =
+        state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Middle),
+            column: pane.inner_rect.x + 2,
+            row: pane.inner_rect.y + 1,
+            modifiers: KeyModifiers::empty(),
+        })]);
+    assert!(release.requests.is_empty());
+}
+
+fn is_forwarded_middle_press(input: &ClientShellInput) -> bool {
+    matches!(
+        &input.requests[..],
+        [ClientMessage::ClientShellPaneInput { pane_id, events }]
+            if pane_id == "pane_1"
+                && matches!(
+                    &events[..],
+                    [ClientPaneInputEvent::Mouse {
+                        kind: crate::protocol::ClientMouseKind::Down(
+                            crate::protocol::ClientMouseButton::Middle
+                        ),
+                        ..
+                    }]
+                )
+    )
+}
+
+#[test]
+fn plain_middle_click_pastes_over_mouse_reporting_pane() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    let mut pane_surface = surface();
+    pane_surface.panes[0].mouse_reporting = true;
+    state.set_pane_surface(pane_surface);
+    state.compose(106, 20).expect("composed frame");
+    let pane = state.hits.panes[0].clone();
+    state.last_copied_selection = Some("echo herdr".into());
+
+    let click = state.handle_raw_events(vec![middle_click_at(pane.inner_rect)]);
+    assert!(matches!(
+        &click.requests[..],
+        [ClientMessage::ClientShellPaneInput { pane_id, events }]
+            if pane_id == "pane_1"
+                && matches!(&events[..], [ClientPaneInputEvent::Paste(text)] if text == "echo herdr")
+    ));
+    assert!(state.pane_mouse_gesture.is_none());
+    let release =
+        state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Middle),
+            column: pane.inner_rect.x + 2,
+            row: pane.inner_rect.y + 1,
+            modifiers: KeyModifiers::empty(),
+        })]);
+    assert!(release.requests.is_empty());
+}
+
+#[test]
+fn modified_or_empty_middle_click_reaches_mouse_reporting_pane() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    let mut pane_surface = surface();
+    pane_surface.panes[0].mouse_reporting = true;
+    state.set_pane_surface(pane_surface);
+    state.compose(106, 20).expect("composed frame");
+    let pane = state.hits.panes[0].clone();
+
+    let empty = state.handle_raw_events(vec![middle_click_at(pane.inner_rect)]);
+    assert!(is_forwarded_middle_press(&empty));
+    state.pane_mouse_gesture = None;
+
+    state.last_copied_selection = Some("must not paste".into());
+    let modified =
+        state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Middle),
+            column: pane.inner_rect.x + 2,
+            row: pane.inner_rect.y + 1,
+            modifiers: KeyModifiers::CONTROL,
+        })]);
+    assert!(is_forwarded_middle_press(&modified));
+}
+
+#[test]
+fn middle_click_does_not_paste_outside_terminal_mode() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.compose(106, 20).expect("composed frame");
+    let pane = state.hits.panes[0].clone();
+    state.last_copied_selection = Some("echo herdr".into());
+    state.mode = ClientShellMode::Resize;
+
+    let click = state.handle_raw_events(vec![middle_click_at(pane.inner_rect)]);
+    assert!(!click
+        .requests
+        .iter()
+        .any(|request| matches!(request, ClientMessage::ClientShellPaneInput { .. })));
+}
+
+#[test]
+fn middle_click_paste_prefers_host_primary_selection_over_last_copy() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.last_copied_selection = Some("from herdr".into());
+
+    let mut host = ClientShellInput::default();
+    assert!(state.paste_primary_selection_with(
+        ClientInputTarget::Pane("pane_1".into()),
+        &mut host,
+        || Some("from browser".into()),
+    ));
+    assert!(matches!(
+        &host.requests[..],
+        [ClientMessage::ClientShellPaneInput { events, .. }]
+            if matches!(&events[..], [ClientPaneInputEvent::Paste(text)] if text == "from browser")
+    ));
+
+    let mut empty_host = ClientShellInput::default();
+    assert!(state.paste_primary_selection_with(
+        ClientInputTarget::Popup("terminal-popup".into()),
+        &mut empty_host,
+        || Some(String::new()),
+    ));
+    assert!(matches!(
+        &empty_host.requests[..],
+        [ClientMessage::ClientShellPopupInput { terminal_id, events }]
+            if terminal_id == "terminal-popup"
+                && matches!(&events[..], [ClientPaneInputEvent::Paste(text)] if text == "from herdr")
+    ));
+
+    state.last_copied_selection = None;
+    let mut nothing = ClientShellInput::default();
+    assert!(!state.paste_primary_selection_with(
+        ClientInputTarget::Pane("pane_1".into()),
+        &mut nothing,
+        || None,
+    ));
+    assert!(nothing.requests.is_empty());
 }

@@ -236,6 +236,16 @@ pub fn read_clipboard_text() -> Option<String> {
 }
 
 /// Unsupported platform stub.
+pub fn write_primary_selection(_bytes: &[u8]) -> bool {
+    false
+}
+
+/// Unsupported platform stub.
+pub fn read_primary_selection_text() -> Option<String> {
+    None
+}
+
+/// Unsupported platform stub.
 pub fn clipboard_text_matches(_bytes: &[u8]) -> Option<bool> {
     None
 }

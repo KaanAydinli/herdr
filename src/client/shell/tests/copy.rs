@@ -209,8 +209,9 @@ fn client_mouse_selection_highlights_and_copies_through_endpoint_extraction() {
     assert!(repaint);
     assert!(matches!(
         &actions[..],
-        [ClientShellAction::ClipboardWrite(bytes)] if bytes == b"LIV"
+        [ClientShellAction::PrimarySelectionWrite(primary), ClientShellAction::ClipboardWrite(bytes)] if primary == b"LIV" && bytes == b"LIV"
     ));
+    assert_eq!(state.last_copied_selection.as_deref(), Some("LIV"));
     assert_eq!(
         state
             .copy_feedback
@@ -344,7 +345,9 @@ fn retained_mouse_selection_survives_output_and_copies_without_terminal_input() 
             text: "yIV".into(),
         }),
     );
-    assert!(matches!(&actions[..], [ClientShellAction::ClipboardWrite(bytes)] if bytes == b"yIV"));
+    assert!(
+        matches!(&actions[..], [ClientShellAction::PrimarySelectionWrite(primary), ClientShellAction::ClipboardWrite(bytes)] if primary == b"yIV" && bytes == b"yIV")
+    );
 }
 
 #[test]

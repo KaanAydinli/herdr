@@ -255,6 +255,7 @@ pub(crate) enum ClientShellAction {
         request: Box<crate::api::schema::Request>,
     },
     ClipboardWrite(Vec<u8>),
+    PrimarySelectionWrite(Vec<u8>),
     OpenSafeWebUrl(String),
     ActivateEndpoint {
         endpoint_id: ClientEndpointId,
@@ -922,6 +923,10 @@ pub(crate) struct ClientShellState {
     pub(super) url_click_consumes_until_up: bool,
     pub(super) replaying_url_click: bool,
     pub(super) selection: Option<crate::selection::Selection<String>>,
+    /// Text of the last pane selection Herdr copied. Middle-click paste falls back to it
+    /// when the host primary selection cannot be read, such as on macOS, Windows, or
+    /// inside an SSH session without a display.
+    pub(super) last_copied_selection: Option<String>,
     pub(super) last_pane_click: Option<ClientPaneClick>,
     pub(super) selection_autoscroll: Option<ClientSelectionAutoscroll>,
     pub(super) selection_autoscroll_deadline: Option<std::time::Instant>,
@@ -1088,6 +1093,7 @@ impl ClientShellState {
             url_click_consumes_until_up: false,
             replaying_url_click: false,
             selection: None,
+            last_copied_selection: None,
             last_pane_click: None,
             selection_autoscroll: None,
             selection_autoscroll_deadline: None,

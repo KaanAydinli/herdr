@@ -4,6 +4,22 @@ use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 const SELECTION_AUTOSCROLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(30);
 const SELECTION_REPAINT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
 
+/// Plain middle-click pastes even over applications that capture the mouse: agent TUIs
+/// such as Claude Code enable full mouse tracking but ignore the middle button, so
+/// forwarding it would make paste impossible there. A modified middle-click still reaches
+/// a mouse-capturing application, as does any middle-click when there is nothing to paste.
+fn middle_click_pastes(hit: &PaneHit, mouse: MouseEvent) -> bool {
+    !hit.mouse_reporting || mouse.modifiers.is_empty()
+}
+
+fn host_primary_selection_text() -> Option<String> {
+    // Shell tests must not read or depend on the developer's desktop selection.
+    if cfg!(test) {
+        return None;
+    }
+    crate::selection::read_primary_selection_text()
+}
+
 impl ClientShellState {
     fn set_sidebar_width_from_column(&mut self, column: u16, outcome: &mut ClientShellInput) {
         let (min, max) = crate::config::validated_sidebar_bounds(
@@ -912,6 +928,13 @@ impl ClientShellState {
         if let Some(hit) = self.hits.popup.clone() {
             if super::contains(hit.inner_rect, point) {
                 match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Middle)
+                        if middle_click_pastes(&hit, mouse)
+                            && self.paste_primary_selection_with(
+                                ClientInputTarget::Popup(hit.pane_id.clone()),
+                                outcome,
+                                host_primary_selection_text,
+                            ) => {}
                     MouseEventKind::Down(button) => {
                         self.push_pane_mouse_event(&hit, mouse, mouse.modifiers, outcome);
                         if hit.mouse_reporting {
@@ -2346,13 +2369,32 @@ impl ClientShellState {
                 }
             }
             MouseEventKind::Down(MouseButton::Middle) => {
-                if let Some(hit) = self
+                let Some(hit) = self
                     .hits
                     .panes
                     .iter()
-                    .find(|hit| super::contains(hit.inner_rect, point) && hit.mouse_reporting)
+                    .find(|hit| super::contains(hit.inner_rect, point))
                     .cloned()
-                {
+                else {
+                    return;
+                };
+                let pasted = self.mode == ClientShellMode::Terminal
+                    && middle_click_pastes(&hit, mouse)
+                    && self.paste_primary_selection_with(
+                        ClientInputTarget::Pane(hit.pane_id.clone()),
+                        outcome,
+                        host_primary_selection_text,
+                    );
+                if pasted {
+                    if self.focused_pane_id().as_deref() != Some(hit.pane_id.as_str()) {
+                        self.push_endpoint_method(
+                            crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget {
+                                pane_id: hit.pane_id,
+                            }),
+                            outcome,
+                        );
+                    }
+                } else if hit.mouse_reporting {
                     self.push_pane_mouse_event(&hit, mouse, mouse.modifiers, outcome);
                     self.pane_mouse_gesture = Some(ClientPaneMouseGesture {
                         last_position: self.pane_mouse_position(&hit, mouse),
@@ -2428,6 +2470,25 @@ impl ClientShellState {
         } else {
             cell
         }
+    }
+
+    /// Middle-click paste for terminals that are not capturing the mouse, following the
+    /// X11/Wayland convention. The host primary selection wins; Herdr's last copied pane
+    /// selection covers hosts where it cannot be read (macOS, Windows, SSH without a display).
+    pub(super) fn paste_primary_selection_with(
+        &self,
+        target: ClientInputTarget,
+        outcome: &mut ClientShellInput,
+        read_primary_selection: impl FnOnce() -> Option<String>,
+    ) -> bool {
+        let Some(text) = read_primary_selection()
+            .filter(|text| !text.is_empty())
+            .or_else(|| self.last_copied_selection.clone())
+        else {
+            return false;
+        };
+        push_target_event(target, ClientPaneInputEvent::Paste(text), outcome);
+        true
     }
 
     pub(super) fn push_pane_mouse_event(

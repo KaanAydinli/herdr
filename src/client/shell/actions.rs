@@ -633,9 +633,14 @@ impl ClientShellState {
                         if !text.is_empty() =>
                     {
                         let repaint = self.show_copy_feedback(std::time::Instant::now());
+                        let bytes = text.clone().into_bytes();
+                        self.last_copied_selection = Some(text);
                         (
                             repaint,
-                            vec![ClientShellAction::ClipboardWrite(text.into_bytes())],
+                            vec![
+                                ClientShellAction::PrimarySelectionWrite(bytes.clone()),
+                                ClientShellAction::ClipboardWrite(bytes),
+                            ],
                         )
                     }
                     Ok(crate::api::schema::ResponseResult::PaneSelection { .. }) => {

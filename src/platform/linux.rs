@@ -795,6 +795,20 @@ pub fn read_clipboard_text() -> Option<String> {
     None
 }
 
+/// Mirror text into the X11/Wayland primary selection used by middle-click paste.
+pub fn write_primary_selection(bytes: &[u8]) -> bool {
+    primary_selection_write_commands()
+        .iter()
+        .any(|command| run_clipboard_command(command, bytes))
+}
+
+/// Read the X11/Wayland primary selection used by middle-click paste.
+pub fn read_primary_selection_text() -> Option<String> {
+    primary_selection_read_commands()
+        .iter()
+        .find_map(read_clipboard_text_with_command)
+}
+
 pub fn clipboard_text_matches(_bytes: &[u8]) -> Option<bool> {
     None
 }
@@ -1028,6 +1042,65 @@ fn read_clipboard_text_commands() -> Vec<ClipboardCommand> {
         commands.push(ClipboardCommand {
             program: "xsel",
             args: &["--clipboard", "--output"],
+        });
+    }
+
+    commands
+}
+
+fn primary_selection_write_commands() -> Vec<ClipboardCommand> {
+    let mut commands = Vec::new();
+
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        commands.push(ClipboardCommand {
+            program: "wl-copy",
+            args: &["--primary", "--type", "text/plain;charset=utf-8"],
+        });
+    }
+
+    if std::env::var_os("DISPLAY").is_some() {
+        commands.push(ClipboardCommand {
+            program: "xclip",
+            args: &["-selection", "primary", "-in"],
+        });
+        commands.push(ClipboardCommand {
+            program: "xsel",
+            args: &["--primary", "--input"],
+        });
+    }
+
+    commands
+}
+
+fn primary_selection_read_commands() -> Vec<ClipboardCommand> {
+    let mut commands = Vec::new();
+
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        // Text MIME types make wl-paste append a newline unless told not to, which would
+        // turn a middle-click paste into an accidental Enter.
+        commands.push(ClipboardCommand {
+            program: "wl-paste",
+            args: &[
+                "--primary",
+                "--no-newline",
+                "--type",
+                "text/plain;charset=utf-8",
+            ],
+        });
+        commands.push(ClipboardCommand {
+            program: "wl-paste",
+            args: &["--primary", "--no-newline", "--type", "text/plain"],
+        });
+    }
+
+    if std::env::var_os("DISPLAY").is_some() {
+        commands.push(ClipboardCommand {
+            program: "xclip",
+            args: &["-selection", "primary", "-out"],
+        });
+        commands.push(ClipboardCommand {
+            program: "xsel",
+            args: &["--primary", "--output"],
         });
     }
 

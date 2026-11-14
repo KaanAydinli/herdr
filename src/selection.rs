@@ -376,6 +376,23 @@ pub fn write_osc52_bytes(bytes: &[u8]) -> bool {
     }
 }
 
+/// Mirror selected text into the platform primary selection for middle-click paste.
+///
+/// Remote sessions use OSC 52 for the clipboard because native tools would reach the
+/// wrong machine; the primary selection follows the same policy and is skipped there.
+pub fn write_primary_selection_bytes(bytes: &[u8]) -> bool {
+    !should_prefer_osc52() && crate::platform::write_primary_selection(bytes)
+}
+
+/// Read the platform primary selection unless native clipboard tools would reach the
+/// wrong machine.
+pub fn read_primary_selection_text() -> Option<String> {
+    if should_prefer_osc52() {
+        return None;
+    }
+    crate::platform::read_primary_selection_text()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

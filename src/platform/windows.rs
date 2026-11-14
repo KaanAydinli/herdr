@@ -2498,6 +2498,16 @@ pub fn read_clipboard_text() -> Option<String> {
     None
 }
 
+/// Windows has no primary selection; middle-click paste uses Herdr's last copied selection.
+pub fn write_primary_selection(_bytes: &[u8]) -> bool {
+    false
+}
+
+/// Windows has no primary selection; middle-click paste uses Herdr's last copied selection.
+pub fn read_primary_selection_text() -> Option<String> {
+    None
+}
+
 /// Whether the system clipboard currently holds exactly this text.
 ///
 /// Returns `None` when the clipboard changed since our last write, cannot be read,

@@ -638,6 +638,16 @@ pub fn write_clipboard(bytes: &[u8]) -> bool {
     )
 }
 
+/// macOS has no primary selection; middle-click paste uses Herdr's last copied selection.
+pub fn write_primary_selection(_bytes: &[u8]) -> bool {
+    false
+}
+
+/// macOS has no primary selection; middle-click paste uses Herdr's last copied selection.
+pub fn read_primary_selection_text() -> Option<String> {
+    None
+}
+
 pub fn read_clipboard_text() -> Option<String> {
     const MAX_CLIPBOARD_TEXT_BYTES: usize = 1024 * 1024;
 

@@ -28,6 +28,9 @@ pub(super) fn dispatch_client_shell_actions(
             shell::ClientShellAction::ClipboardWrite(bytes) => {
                 crate::selection::write_osc52_bytes(&bytes);
             }
+            shell::ClientShellAction::PrimarySelectionWrite(bytes) => {
+                crate::selection::write_primary_selection_bytes(&bytes);
+            }
             shell::ClientShellAction::ActivateEndpoint {
                 endpoint_id,
                 target,
