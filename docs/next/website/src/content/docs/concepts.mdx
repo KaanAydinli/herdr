@@ -17,6 +17,22 @@ A tab is a layout inside a workspace. Use tabs to separate views like `agents`, 
 
 Tabs are addressable from the CLI and socket API.
 
+### Code tab
+
+Right-click a Herdr tab and choose **Open Code**. The editor fills that tab and opens in the working directory of its focused pane. Files open as subtabs. The original shell, agents, and splits stay running. Save your edits and press `Ctrl+Q` to return to the previous layout. Each tab can have its own editor. SSH tabs show the action when their server supports it.
+
+Click **Files** to toggle the right-hand tree or drag its left edge to resize it. Click a folder to expand it or double-click to enter it. The footer shows the current directory, with `~` for home. Click **&lt;** to go up one level. Open file tabs keep their buffers when you navigate. Right-click a file or folder to rename or delete it. Deleting a folder also deletes its contents after confirmation.
+
+On a narrow terminal the tree overlays the editor. Use `Ctrl+P` to find a file by path, `Ctrl+F` to find text in the current buffer, and **Search** to find text under the current directory. Workspace searches respect Git ignore rules and show up to 100 results. The editor opens UTF-8 text files up to 8 MiB.
+
+Markdown opens in a formatted preview. Click **Source** to edit and **Preview** to see the result, including unsaved edits. `F3` switches between the two views.
+
+Drag across code, rendered Markdown, or a PDF in text view and release to copy the highlighted text to your clipboard. This also works over SSH. To copy manually with `Ctrl+C`, set `[ui].copy_on_select = false` in the workspace host’s Herdr configuration.
+
+PNG, JPEG, WebP, BMP, and GIF files open as images inside the file tab. Herdr fits them to the available pixel area and preserves small images at their original resolution. Use an outer terminal that supports Kitty graphics, such as Kitty, for image and PDF page previews. Animated images show their first frame. PDF files open one page at a time. Use the footer arrows or the left and right arrow keys to turn pages. Click **Text view** or press `F3` to read selectable page text at the terminal's font size. PDF support uses the Poppler utilities (`pdfinfo`, `pdftoppm`, and `pdftotext`) on the computer hosting the workspace. With SSH, that is the remote server. Previews travel through the same terminal connection as the editor.
+
+Click **Save** or press `F2`. The editor also accepts `Ctrl+S` when your Herdr prefix allows it. Changes on disk reload clean files automatically. Saving a file that you and an agent both changed opens a comparison. Press `Esc` to keep editing, `R` to load the disk version, or `W` to write your buffer. Click **×** on a file tab or press `Ctrl+W` to close the active file. Closing an edited file asks whether to discard its unsaved changes.
+
 ## Pane
 
 A pane is a real terminal. Herdr renders the terminal output, sends input back to the process, and preserves the pane across client detach.

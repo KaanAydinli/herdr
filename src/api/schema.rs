@@ -87,6 +87,8 @@ pub enum Method {
     WorkspaceGet(WorkspaceTarget),
     #[serde(rename = "workspace.focus")]
     WorkspaceFocus(WorkspaceTarget),
+    #[serde(rename = "workspace.open_code")]
+    WorkspaceOpenCode(WorkspaceTarget),
     #[serde(rename = "workspace.rename")]
     WorkspaceRename(WorkspaceRenameParams),
     #[serde(rename = "workspace.move")]
@@ -111,6 +113,8 @@ pub enum Method {
     TabList(TabListParams),
     #[serde(rename = "tab.get")]
     TabGet(TabTarget),
+    #[serde(rename = "tab.open_code")]
+    TabOpenCode(TabTarget),
     #[serde(rename = "tab.focus")]
     TabFocus(TabTarget),
     #[serde(rename = "tab.rename")]

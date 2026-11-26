@@ -43,12 +43,14 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
     "tab.create",
     "tab.focus",
     "tab.move",
+    "tab.open_code",
     "tab.rename",
     "workspace.close",
     "workspace.create",
     "workspace.focus",
     "workspace.move",
     "workspace.move_block",
+    "workspace.open_code",
     "workspace.rename",
     "worktree.create",
     "worktree.list",
@@ -292,6 +294,14 @@ mod tests {
         assert_eq!(
             actual.remove("git.history").as_deref(),
             Some("0f2098448203618ba3b3fc01a8e2baed2f5f488ef6ca61521c2b4f91cdc83216")
+        );
+        assert_eq!(
+            actual.remove("tab.open_code").as_deref(),
+            Some("b3cce569c536f77f0c471c8b04148e4e8dd7d14e5bd9eeb61951cf03245ec872")
+        );
+        assert_eq!(
+            actual.remove("workspace.open_code").as_deref(),
+            Some("1dfa9f636218a19e451751b65d3f777fa13f450a100aa3bcad720c4da577ec71")
         );
         // Freeze additive methods separately without rewriting the published fixture.
         assert_eq!(

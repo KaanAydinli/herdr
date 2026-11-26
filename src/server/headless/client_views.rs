@@ -233,6 +233,8 @@ impl HeadlessServer {
                 | Method::PaneMove(_)
                 | Method::PaneSplit(_)
                 | Method::TabClose(_)
+                | Method::TabOpenCode(_)
+                | Method::WorkspaceOpenCode(_)
                 | Method::TabCreate(_)
                 | Method::WorkspaceClose(_)
                 | Method::WorkspaceCreate(_)
@@ -267,6 +269,8 @@ impl HeadlessServer {
                 | Method::PaneSwap(_)
                 | Method::PaneZoom(_)
                 | Method::TabClose(_)
+                | Method::TabOpenCode(_)
+                | Method::WorkspaceOpenCode(_)
                 | Method::TabCreate(_)
                 | Method::TabFocus(_)
                 | Method::TabMove(_)
@@ -300,6 +304,8 @@ impl HeadlessServer {
                 | Method::PaneSwap(_)
                 | Method::PaneZoom(_)
                 | Method::TabClose(_)
+                | Method::TabOpenCode(_)
+                | Method::WorkspaceOpenCode(_)
                 | Method::TabCreate(_)
                 | Method::TabFocus(_)
                 | Method::WorkspaceClose(_)
@@ -851,6 +857,8 @@ impl HeadlessServer {
         };
         let create_focus_requested = match &msg.request.method {
             api::schema::Method::WorkspaceCreate(params) => params.focus,
+            api::schema::Method::TabOpenCode(_) => true,
+            api::schema::Method::WorkspaceOpenCode(_) => true,
             api::schema::Method::TabCreate(params) => params.focus,
             _ => false,
         };

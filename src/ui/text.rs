@@ -1,4 +1,34 @@
+use std::ops::Range;
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+/// Visible bytes and caret column for a single-line field. The cursor is a
+/// byte offset on a grapheme boundary. Reserve one cell for the terminal caret.
+pub(crate) fn input_viewport(text: &str, cursor: usize, width: u16) -> (Range<usize>, u16) {
+    if width == 0 {
+        return (cursor..cursor, 0);
+    }
+    let mut start = cursor;
+    let mut cells = 0;
+    for (index, grapheme) in text[..cursor].grapheme_indices(true).rev() {
+        let next = cells + grapheme.width();
+        if next >= usize::from(width) {
+            break;
+        }
+        start = index;
+        cells = next;
+    }
+    let mut end = cursor;
+    let mut used = cells;
+    for grapheme in text[cursor..].graphemes(true) {
+        used += grapheme.width();
+        if used > usize::from(width) {
+            break;
+        }
+        end += grapheme.len();
+    }
+    (start..end, cells as u16)
+}
 
 pub(crate) fn display_width(text: &str) -> usize {
     UnicodeWidthStr::width(text)

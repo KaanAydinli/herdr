@@ -22,6 +22,7 @@ mod client;
 mod config;
 mod copy_mode;
 mod detect;
+mod editor;
 mod events;
 mod git_history;
 use ghostty_vt as ghostty;
@@ -513,6 +514,9 @@ fn main() -> io::Result<()> {
             std::process::exit(2);
         }
     };
+    if raw_args.get(1).is_some_and(|arg| arg == editor::ENTRY) && raw_args.len() == 2 {
+        return editor::run();
+    }
     #[cfg(windows)]
     if let Some(result) = platform::maybe_activate_desktop_notification(&raw_args) {
         return result;

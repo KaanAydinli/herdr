@@ -334,6 +334,9 @@ pub(crate) use unix_common::{
     begin_cli_output, end_cli_output, forward_remote_bridge_stdio, RemoteBridgeWake,
 };
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) use unix_common::rename_without_replace;
+
 mod client_state;
 pub(crate) use client_state::{create_private_state_file, replace_file, sync_parent_directory};
 

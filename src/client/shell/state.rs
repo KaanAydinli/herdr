@@ -519,6 +519,7 @@ pub(super) struct ClientWorktreeRemoveOverlay {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ClientContextMenuAction {
+    OpenCode,
     Rename,
     Close,
     NewWorktree,
@@ -547,6 +548,7 @@ pub(super) enum ClientContextMenuTarget {
         collapsed: bool,
     },
     Tab {
+        can_open_code: bool,
         tab_id: String,
         workspace_id: String,
     },

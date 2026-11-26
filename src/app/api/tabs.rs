@@ -33,6 +33,135 @@ impl App {
         encode_success(id, ResponseResult::TabList { tabs })
     }
 
+    pub(super) fn open_workspace_code(
+        &mut self,
+        id: String,
+        target: crate::api::schema::WorkspaceTarget,
+    ) -> String {
+        let Some(ws_idx) = self.parse_workspace_id(&target.workspace_id) else {
+            return workspace_not_found(id, &target.workspace_id);
+        };
+        let exe = match crate::platform::launch_executable() {
+            Ok(path) => path.to_string_lossy().into_owned(),
+            Err(err) => return encode_error(id, "editor_unavailable", err.to_string()),
+        };
+        let argv = vec![exe, crate::editor::ENTRY.to_owned()];
+        let Some(ws) = self.state.workspaces.get(ws_idx) else {
+            return workspace_not_found(id, &target.workspace_id);
+        };
+        let existing = ws.tabs.iter().enumerate().find_map(|(idx, tab)| {
+            tab.panes.iter().find_map(|(pane, state)| {
+                if self.overlay_panes.contains_key(pane) {
+                    return None;
+                }
+                let terminal = self.state.terminals.get(&state.attached_terminal_id)?;
+                (terminal.launch_argv.as_ref() == Some(&argv)).then_some((idx, *pane))
+            })
+        });
+        let tab_idx = if let Some((idx, pane)) = existing {
+            self.state.focus_pane_in_workspace(ws_idx, pane);
+            idx
+        } else {
+            let Some(cwd) = self.seed_cwd_from_workspace(ws_idx) else {
+                return encode_error(
+                    id,
+                    "workspace_cwd_unavailable",
+                    "Workspace directory is unavailable",
+                );
+            };
+            let (rows, cols) = self.state.estimate_pane_size();
+            let ws = &mut self.state.workspaces[ws_idx];
+            let (idx, terminal, runtime) = match ws.create_tab_argv_command(
+                rows,
+                cols,
+                cwd,
+                &argv,
+                Vec::new(),
+                self.state.pane_scrollback_limit_bytes,
+                self.state.host_terminal_theme,
+                self.state.host_terminal_appearance,
+            ) {
+                Ok(created) => created,
+                Err(err) => return encode_error(id, "editor_unavailable", err.to_string()),
+            };
+            ws.tabs[idx].set_custom_name("Code".into());
+            let pane = ws.tabs[idx].root_pane;
+            if let Some(state) = ws.pane_state_mut(pane) {
+                state.right_click_passthrough = true;
+            }
+            self.terminal_runtimes.insert(terminal.id.clone(), runtime);
+            self.state.terminals.insert(terminal.id.clone(), terminal);
+            self.state.remove_alias_shadowed_by_new_pane(pane);
+            self.state.switch_workspace_tab(ws_idx, idx);
+            self.emit_tab_created_events(ws_idx, idx);
+            idx
+        };
+        self.state.mode = Mode::Terminal;
+        self.schedule_session_save();
+        match self.tab_info(ws_idx, tab_idx) {
+            Some(tab) => encode_success(id, ResponseResult::TabInfo { tab }),
+            None => encode_error(id, "tab_not_found", "Editor tab disappeared"),
+        }
+    }
+
+    pub(super) fn open_tab_code(&mut self, id: String, target: TabTarget) -> String {
+        let Some((ws_idx, tab_idx)) = self.parse_tab_id(&target.tab_id) else {
+            return tab_not_found(id, &target.tab_id);
+        };
+        let exe = match crate::platform::launch_executable() {
+            Ok(exe) => exe.to_string_lossy().into_owned(),
+            Err(err) => return encode_error(id, "editor_unavailable", err.to_string()),
+        };
+        let argv = vec![exe, crate::editor::ENTRY.to_owned()];
+        let tab = &self.state.workspaces[ws_idx].tabs[tab_idx];
+        let existing = tab.panes.iter().find_map(|(pane, state)| {
+            let terminal = self.state.terminals.get(&state.attached_terminal_id)?;
+            (terminal.launch_argv.as_ref() == Some(&argv)).then_some(*pane)
+        });
+        if let Some(pane) = existing {
+            self.state.focus_pane_in_workspace(ws_idx, pane);
+            let tab = &mut self.state.workspaces[ws_idx].tabs[tab_idx];
+            tab.zoomed = tab.panes.len() > 1;
+            self.state.mode = Mode::Terminal;
+        } else {
+            let Some(cwd) = self.launch_cwd_for_pane_in_workspace(ws_idx, tab.layout.focused())
+            else {
+                return encode_error(id, "tab_cwd_unavailable", "Tab directory is unavailable");
+            };
+            let new_pane = match self.spawn_overlay_in_tab(
+                ws_idx,
+                tab_idx,
+                &argv,
+                Some(cwd),
+                Vec::new(),
+                Vec::new(),
+            ) {
+                Ok(pane) => pane,
+                Err(err) => return encode_error(id, "editor_unavailable", err.to_string()),
+            };
+            let pane_id = new_pane.pane_id;
+            if let Some(state) = self.state.workspaces[ws_idx].pane_state_mut(pane_id) {
+                state.right_click_passthrough = true;
+            }
+            let terminal_id = new_pane.terminal.id.clone();
+            self.terminal_runtimes
+                .insert(terminal_id.clone(), new_pane.runtime);
+            self.state.terminals.insert(terminal_id, new_pane.terminal);
+            if let Some(pane) = self.pane_info(ws_idx, pane_id) {
+                self.emit_event(EventEnvelope {
+                    event: EventKind::PaneCreated,
+                    data: EventData::PaneCreated { pane },
+                });
+            }
+        }
+        self.emit_layout_updated_event(ws_idx, tab_idx);
+        self.schedule_session_save();
+        match self.tab_info(ws_idx, tab_idx) {
+            Some(tab) => encode_success(id, ResponseResult::TabInfo { tab }),
+            None => tab_not_found(id, &target.tab_id),
+        }
+    }
+
     pub(super) fn handle_tab_get(&mut self, id: String, target: TabTarget) -> String {
         let Some((ws_idx, tab_idx)) = self.parse_tab_id(&target.tab_id) else {
             return tab_not_found(id, &target.tab_id);

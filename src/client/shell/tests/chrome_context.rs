@@ -510,3 +510,34 @@ fn close_confirmation_error_becomes_client_owned_overlay_and_stable_workspace_cl
             if params.workspace_id == "ws_1" && !params.close_group
     ));
 }
+
+#[test]
+fn tab_editor_requires_an_advertised_method_and_targets_the_clicked_tab() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    for supported in [false, true] {
+        let methods = if supported {
+            vec!["tab.open_code".into()]
+        } else {
+            vec![]
+        };
+        state.set_endpoint_methods(Some(methods));
+        state.open_tab_context_menu("tab_1".into(), 0, 0);
+        let Some(ClientShellOverlay::ContextMenu(menu)) = &state.overlay else {
+            panic!("missing tab menu")
+        };
+        let index = menu
+            .items()
+            .iter()
+            .position(|i| i.action == ClientContextMenuAction::OpenCode);
+        assert_eq!(index.is_some(), supported);
+        if let Some(index) = index {
+            let mut input = ClientShellInput::default();
+            state.activate_context_menu_item(index, &mut input);
+            assert!(
+                matches!(&input.actions[..], [ClientShellAction::Endpoint { request, .. }]
+                if matches!(&request.method, crate::api::schema::Method::TabOpenCode(target) if target.tab_id=="tab_1"))
+            );
+        }
+    }
+}

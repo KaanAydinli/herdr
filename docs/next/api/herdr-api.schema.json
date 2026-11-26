@@ -5042,6 +5042,22 @@
         {
           "properties": {
             "method": {
+              "const": "workspace.open_code",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/WorkspaceTarget"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
               "const": "workspace.rename",
               "type": "string"
             },
@@ -5219,6 +5235,22 @@
           "properties": {
             "method": {
               "const": "tab.get",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/TabTarget"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "tab.open_code",
               "type": "string"
             },
             "params": {

@@ -251,7 +251,16 @@ impl App {
         }
 
         let overlay_state = if let AppEvent::PaneDied { pane_id, .. } = &ev {
-            self.overlay_panes.remove(pane_id).map(|overlay| {
+            self.overlay_panes.remove(pane_id).map(|mut overlay| {
+                // Tabs and workspaces can be reordered while the editor is open.
+                if let Some((ws_idx, _)) = self.find_pane(*pane_id) {
+                    if let Some(tab_idx) =
+                        self.state.workspaces[ws_idx].find_tab_index_for_pane(*pane_id)
+                    {
+                        overlay.ws_idx = ws_idx;
+                        overlay.tab_idx = tab_idx;
+                    }
+                }
                 let was_overlay_active =
                     self.state
                         .is_active_pane(overlay.ws_idx, overlay.tab_idx, *pane_id);
@@ -1071,6 +1080,10 @@ impl App {
                     "worktree.remove is handled asynchronously by the app runtime",
                 );
             }
+            Method::WorkspaceOpenCode(target) => {
+                return self.open_workspace_code(request.id, target)
+            }
+            Method::TabOpenCode(target) => return self.open_tab_code(request.id, target),
             Method::TabList(params) => return self.handle_tab_list(request.id, params),
             Method::TabGet(target) => return self.handle_tab_get(request.id, target),
             Method::TabCreate(params) => return self.handle_tab_create(request.id, params),

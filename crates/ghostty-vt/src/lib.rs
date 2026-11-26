@@ -495,7 +495,8 @@ impl CellWide {
 
 type WritePtyCallback = dyn FnMut(&[u8]) + Send;
 
-const MAX_CLIPBOARD_BYTES: usize = 192 * 1024;
+/// Largest decoded text payload forwarded from a pane to the host clipboard.
+pub const MAX_CLIPBOARD_BYTES: usize = 192 * 1024;
 
 #[derive(Default)]
 struct TerminalCallbackState {

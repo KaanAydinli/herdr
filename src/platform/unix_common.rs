@@ -476,6 +476,21 @@ pub(crate) fn set_default_plugin_pane_pwd(env: &mut Vec<(String, String)>, cwd: 
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn rename_without_replace(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> std::io::Result<()> {
+    use rustix::fs::{renameat_with, RenameFlags, CWD};
+    Ok(renameat_with(
+        CWD,
+        source,
+        CWD,
+        destination,
+        RenameFlags::NOREPLACE,
+    )?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

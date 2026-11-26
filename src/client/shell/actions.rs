@@ -350,6 +350,8 @@ impl ClientShellState {
     ) -> bool {
         let changes_focus = match &method {
             crate::api::schema::Method::WorkspaceFocus(_)
+            | crate::api::schema::Method::TabOpenCode(_)
+            | crate::api::schema::Method::WorkspaceOpenCode(_)
             | crate::api::schema::Method::TabFocus(_)
             | crate::api::schema::Method::PaneFocus(_)
             | crate::api::schema::Method::PaneFocusDirection(_) => true,

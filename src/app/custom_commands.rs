@@ -447,27 +447,43 @@ impl App {
         let Some(ws_idx) = self.state.active else {
             return Err(std::io::Error::other("no active workspace"));
         };
+        let tab_idx = self
+            .state
+            .workspaces
+            .get(ws_idx)
+            .ok_or_else(|| std::io::Error::other("workspace disappeared"))?
+            .active_tab_index();
+        let pane = self.spawn_overlay_in_tab(ws_idx, tab_idx, argv, cwd, extra_env, temp_files)?;
+        Ok((ws_idx, pane))
+    }
+
+    pub(crate) fn spawn_overlay_in_tab(
+        &mut self,
+        ws_idx: usize,
+        tab_idx: usize,
+        argv: &[String],
+        cwd: Option<std::path::PathBuf>,
+        extra_env: Vec<(String, String)>,
+        temp_files: Vec<std::path::PathBuf>,
+    ) -> std::io::Result<crate::workspace::NewPane> {
         let previous_focus_target = self.state.current_pane_focus_target();
         let (rows, cols) = self.state.estimate_pane_size();
         let new_rows = rows.max(4);
         let new_cols = cols.max(10);
-
-        let ws = self
+        let tab = self
             .state
             .workspaces
             .get(ws_idx)
-            .ok_or_else(|| std::io::Error::other("active workspace disappeared"))?;
-        let previous_focus = ws
-            .focused_pane_id()
-            .ok_or_else(|| std::io::Error::other("no focused pane"))?;
+            .and_then(|ws| ws.tabs.get(tab_idx))
+            .ok_or_else(|| std::io::Error::other("target tab disappeared"))?;
+        let previous_focus = tab.layout.focused();
+        let previous_zoomed = tab.zoomed;
         let cwd = cwd.or_else(|| {
-            ws.active_tab().and_then(|tab| {
-                tab.cwd_for_pane(
-                    previous_focus,
-                    &self.state.terminals,
-                    &self.terminal_runtimes,
-                )
-            })
+            tab.cwd_for_pane(
+                previous_focus,
+                &self.state.terminals,
+                &self.terminal_runtimes,
+            )
         });
 
         let (tab_idx, new_pane, workspace_id) = {
@@ -476,7 +492,6 @@ impl App {
                 .workspaces
                 .get_mut(ws_idx)
                 .ok_or_else(|| std::io::Error::other("active workspace disappeared"))?;
-            let previous_zoomed = ws.active_tab().map(|tab| tab.zoomed).unwrap_or(false);
             let result = ws.split_pane_argv_command(
                 previous_focus,
                 Direction::Horizontal,
@@ -497,7 +512,7 @@ impl App {
             };
             ws.tabs
                 .get_mut(tab_idx)
-                .ok_or_else(|| std::io::Error::other("plugin overlay tab disappeared"))?
+                .ok_or_else(|| std::io::Error::other("overlay tab disappeared"))?
                 .zoomed = true;
             self.overlay_panes.insert(
                 new_pane.pane_id,
@@ -521,7 +536,7 @@ impl App {
         }
         self.state.switch_workspace_tab(ws_idx, tab_idx);
         self.state.mode = Mode::Terminal;
-        Ok((ws_idx, new_pane))
+        Ok(new_pane)
     }
 }
 

@@ -214,11 +214,24 @@ pub(crate) fn replace_file(
     source: &std::path::Path,
     destination: &std::path::Path,
 ) -> std::io::Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::{
-        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
+    use windows_sys::Win32::Storage::FileSystem::MOVEFILE_REPLACE_EXISTING;
+    move_file(source, destination, MOVEFILE_REPLACE_EXISTING)
+}
 
+pub(crate) fn rename_without_replace(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+) -> std::io::Result<()> {
+    move_file(source, destination, 0)
+}
+
+fn move_file(
+    source: &std::path::Path,
+    destination: &std::path::Path,
+    flags: u32,
+) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
     let source = source
         .as_os_str()
         .encode_wide()
@@ -233,7 +246,7 @@ pub(crate) fn replace_file(
         MoveFileExW(
             source.as_ptr(),
             destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            flags | MOVEFILE_WRITE_THROUGH,
         )
     };
     if moved == 0 {

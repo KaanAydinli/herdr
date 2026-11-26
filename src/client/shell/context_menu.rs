@@ -5,7 +5,7 @@ impl ClientContextMenuOverlay {
         use ClientContextMenuAction as Action;
 
         let item = |label, action| ClientContextMenuItem { label, action };
-        match &self.target {
+        let mut items = match &self.target {
             ClientContextMenuTarget::Workspace { is_git: false, .. } => {
                 vec![item("Rename", Action::Rename), item("Close", Action::Close)]
             }
@@ -79,7 +79,17 @@ impl ClientContextMenuOverlay {
                 ]);
                 items
             }
+        };
+        if matches!(
+            self.target,
+            ClientContextMenuTarget::Tab {
+                can_open_code: true,
+                ..
+            }
+        ) {
+            items.push(item("Open Code", Action::OpenCode));
         }
+        items
     }
 }
 
@@ -133,6 +143,12 @@ impl ClientShellState {
         };
         self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
             target: ClientContextMenuTarget::Tab {
+                can_open_code: self
+                    .endpoints
+                    .iter()
+                    .find(|e| e.endpoint_id == self.active_endpoint_id)
+                    .and_then(|e| e.methods.as_ref())
+                    .is_some_and(|methods| methods.contains("tab.open_code")),
                 tab_id,
                 workspace_id: tab.workspace_id.clone(),
             },
@@ -200,6 +216,7 @@ impl ClientShellState {
             ClientContextMenuTarget::Tab {
                 tab_id,
                 workspace_id,
+                ..
             } => self.activate_tab_context_action(tab_id, workspace_id, action, outcome),
             ClientContextMenuTarget::Pane {
                 pane_id,
@@ -287,6 +304,11 @@ impl ClientShellState {
         outcome: &mut ClientShellInput,
     ) {
         use crate::api::schema::{Method, TabTarget};
+
+        if action == ClientContextMenuAction::OpenCode {
+            self.push_endpoint_method(Method::TabOpenCode(TabTarget { tab_id }), outcome);
+            return;
+        }
 
         self.push_endpoint_method(
             Method::TabFocus(TabTarget {

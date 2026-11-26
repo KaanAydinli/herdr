@@ -1,5 +1,6 @@
 use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers};
 use unicode_segmentation::UnicodeSegmentation;
+#[cfg(test)]
 use unicode_width::UnicodeWidthStr;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -238,29 +239,8 @@ impl TextEditor {
     }
 
     pub fn viewport(&self, width: u16) -> (&str, u16) {
-        if width == 0 {
-            return ("", 0);
-        }
-        let mut start = self.cursor;
-        let mut cells = 0;
-        for (index, grapheme) in self.text[..self.cursor].grapheme_indices(true).rev() {
-            let next = cells + grapheme.width();
-            if next >= usize::from(width) {
-                break;
-            }
-            start = index;
-            cells = next;
-        }
-        let mut end = self.cursor;
-        let mut used = cells;
-        for (index, grapheme) in self.text[self.cursor..].grapheme_indices(true) {
-            used += grapheme.width();
-            if used > usize::from(width) {
-                break;
-            }
-            end = self.cursor + index + grapheme.len();
-        }
-        (&self.text[start..end], cells as u16)
+        let (visible, caret) = crate::ui::input_viewport(&self.text, self.cursor, width);
+        (&self.text[visible], caret)
     }
 }
 
