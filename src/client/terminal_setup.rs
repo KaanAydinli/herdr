@@ -633,6 +633,10 @@ fn restore_terminal_state(
     reset_host_color_scheme_reports: bool,
     #[cfg(windows)] restore_windows_input_mode: Option<u32>,
 ) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    if crate::platform::vte_preview::enabled() {
+        let _ = io::stdout().write_all(crate::platform::vte_preview::CLEAR);
+    }
     let _ = clear_received_kitty_graphics(&mut io::stdout());
 
     // Reset modifyOtherKeys if we enabled it.

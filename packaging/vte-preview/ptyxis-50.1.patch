@@ -1,0 +1,272 @@
+--- a/src/main.c
++++ b/src/main.c
+@@ -21,6 +21,7 @@
+ #include "config.h"
+ 
+ #include <errno.h>
++#include <vte/vte.h>
+ #include <sys/resource.h>
+ 
+ #include <glib/gi18n.h>
+@@ -226,6 +227,7 @@
+   bump_to_max_fd_limit ();
+ 
+   gtk_init ();
++  vte_install_termprop ("vte.ext.herdr.preview", VTE_PROPERTY_STRING, 0);
+ 
+   app = ptyxis_application_new (APP_ID, flags);
+   ret = g_application_run (G_APPLICATION (app), argc, argv);
+--- a/src/ptyxis-client.c
++++ b/src/ptyxis-client.c
+@@ -664,6 +664,9 @@
+   if (ptyxis_profile_get_use_proxy (profile))
+     env = ptyxis_client_discover_proxy_environment (self, NULL, NULL);
+ 
++  if (g_object_get_data (G_OBJECT (pty), "herdr-cell-file"))
++    env = g_environ_setenv (env, "HERDR_VTE_METRICS", g_object_get_data (G_OBJECT (pty), "herdr-cell-file"), TRUE);
++  env = g_environ_setenv (env, "HERDR_VTE_PREVIEW", "1", TRUE);
+   env = g_environ_setenv (env, "PTYXIS_PROFILE", ptyxis_profile_get_uuid (profile), TRUE);
+   env = g_environ_setenv (env, "PTYXIS_VERSION", PACKAGE_VERSION, TRUE);
+   env = g_environ_setenv (env, "COLORTERM", "truecolor", TRUE);
+--- a/src/ptyxis-terminal.c
++++ b/src/ptyxis-terminal.c
+@@ -23,6 +23,12 @@
+ 
+ #include "config.h"
+ 
++#include <errno.h>
++#include <fcntl.h>
++#include <sys/stat.h>
++#include <unistd.h>
++#include <glib/gstdio.h>
++
+ #define PCRE2_CODE_UNIT_WIDTH 0
+ #include <pcre2.h>
+ 
+@@ -69,6 +75,14 @@
+ 
+   GdkRGBA             background;
+ 
++  GdkTexture         *preview;
++  guint32             preview_x, preview_y;
++  guint32             raster_cw, raster_ch;
++  char               *metrics_path;
++  int                 metrics_fd;
++  guint16             metrics_pitch[2];
++  guint               preview_idle;
++
+   guint               size_dismiss_source;
+   guint               n_columns;
+   guint               n_rows;
+@@ -1114,6 +1128,151 @@
+   gtk_snapshot_append_node (snapshot, root);
+ }
+ 
++/* Publish the physical cell pitch separately from the toolkit's logical grid.
++ * The client keeps one read-only fd; zoom and monitor changes update it in place. */
++static void
++herdr_metrics_update (PtyxisTerminal *self)
++{
++  GtkNative *native = gtk_widget_get_native (GTK_WIDGET (self));
++  GdkSurface *surface = native ? gtk_native_get_surface (native) : NULL;
++  double scale = surface ? gdk_surface_get_scale (surface) : 1;
++  guint16 pitch[2];
++
++  if (!self->metrics_path || self->metrics_fd < 0)
++    return;
++  pitch[0] = GUINT16_TO_LE ((guint16) CLAMP (vte_terminal_get_char_width (VTE_TERMINAL (self)) * scale + 0.5, 1, 256));
++  pitch[1] = GUINT16_TO_LE ((guint16) CLAMP (vte_terminal_get_char_height (VTE_TERMINAL (self)) * scale + 0.5, 1, 512));
++  if (memcmp (pitch, self->metrics_pitch, sizeof pitch) != 0 &&
++      pwrite (self->metrics_fd, pitch, sizeof pitch, 0) == sizeof pitch)
++    memcpy (self->metrics_pitch, pitch, sizeof pitch);
++}
++
++static void
++herdr_metrics_realize (PtyxisTerminal *self)
++{
++  GtkNative *native = gtk_widget_get_native (GTK_WIDGET (self));
++  GdkSurface *surface = native ? gtk_native_get_surface (native) : NULL;
++
++  if (surface)
++    {
++      g_signal_handlers_disconnect_by_func (surface, herdr_metrics_update, self);
++      g_signal_connect_object (surface, "notify::scale", G_CALLBACK (herdr_metrics_update), self, G_CONNECT_SWAPPED);
++    }
++  herdr_metrics_update (self);
++}
++
++static void
++herdr_metrics_attach (PtyxisTerminal *self)
++{
++  VtePty *pty = vte_terminal_get_pty (VTE_TERMINAL (self));
++
++  if (!pty)
++    return;
++  if (!self->metrics_path)
++    {
++      self->metrics_path = g_build_filename (g_get_user_runtime_dir (), "herdr-cell-XXXXXX", NULL);
++      self->metrics_fd = g_mkstemp_full (self->metrics_path, O_RDWR | O_CLOEXEC, 0600);
++      if (self->metrics_fd < 0)
++        {
++          g_clear_pointer (&self->metrics_path, g_free);
++          return;
++        }
++    }
++  herdr_metrics_update (self);
++  g_object_set_data_full (G_OBJECT (pty), "herdr-cell-file", g_path_get_basename (self->metrics_path), g_free);
++}
++
++/* Read only immutable, owner-private RGBA buffers produced by a local client. */
++static GdkTexture *
++herdr_preview_load (const char *name,
++                    guint32    *x,
++                    guint32    *y,
++                    guint32    *cw,
++                    guint32    *ch)
++{
++  g_autofree char *path = NULL;
++  g_autofree guchar *pixels = NULL;
++  g_autoptr(GBytes) bytes = NULL;
++  g_autofd int fd = -1;
++  struct stat st;
++  guint32 header[5], w, h;
++  guint32 pitch[2];
++  gsize header_size = sizeof header;
++  gsize length, offset = 0;
++
++  if (!name || strlen (name) != 30 || !g_str_has_prefix (name, "herdr-preview-") ||
++      strspn (name + 14, "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") != 16)
++    return NULL;
++  path = g_build_filename (g_get_user_runtime_dir (), name, NULL);
++  fd = open (path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
++  if (fd < 0 || fstat (fd, &st) < 0 || !S_ISREG (st.st_mode) ||
++      st.st_uid != getuid () || (st.st_mode & 0077) ||
++      read (fd, header, sizeof header) != sizeof header)
++    return NULL;
++  *cw = *ch = 0;
++  if (memcmp (header, "HDP2", 4) == 0)
++    {
++      if (read (fd, pitch, sizeof pitch) != sizeof pitch)
++        return NULL;
++      *cw = GUINT32_FROM_LE (pitch[0]);
++      *ch = GUINT32_FROM_LE (pitch[1]);
++      if (!*cw || !*ch || *cw > 256 || *ch > 512)
++        return NULL;
++      header_size += sizeof pitch;
++    }
++  else if (memcmp (header, "HDP1", 4) != 0)
++    return NULL;
++  *x = GUINT32_FROM_LE (header[1]);
++  *y = GUINT32_FROM_LE (header[2]);
++  w = GUINT32_FROM_LE (header[3]);
++  h = GUINT32_FROM_LE (header[4]);
++  if (*x > (1U << 24) || *y > (1U << 24) || !w || !h || (guint64) w * h > 8 * 1024 * 1024)
++    return NULL;
++  length = (gsize) w * h * 4;
++  if (st.st_size != header_size + length)
++    return NULL;
++  pixels = g_malloc (length);
++  while (offset < length)
++    {
++      ssize_t n = read (fd, pixels + offset, length - offset);
++      if (n < 0 && errno == EINTR)
++        continue;
++      if (n <= 0)
++        return NULL;
++      offset += n;
++    }
++  bytes = g_bytes_new_take (g_steal_pointer (&pixels), length);
++  return gdk_memory_texture_new (w, h, GDK_MEMORY_R8G8B8A8, bytes, w * 4);
++}
++
++static gboolean
++herdr_preview_update (gpointer data)
++{
++  PtyxisTerminal *self = data;
++  const char *name = vte_terminal_get_termprop_string (VTE_TERMINAL (self), "vte.ext.herdr.preview", NULL);
++
++  self->preview_idle = 0;
++  g_clear_object (&self->preview);
++  self->preview = herdr_preview_load (name, &self->preview_x, &self->preview_y, &self->raster_cw, &self->raster_ch);
++  gtk_widget_queue_draw (GTK_WIDGET (self));
++  return G_SOURCE_REMOVE;
++}
++
++static void
++herdr_preview_changed (PtyxisTerminal *self,
++                       const char     *property,
++                       gpointer        unused)
++{
++  if (!self->preview_idle)
++    self->preview_idle = g_idle_add (herdr_preview_update, self);
++}
++
++static void
++herdr_preview_clear (PtyxisTerminal *self)
++{
++  vte_terminal_reset_termprop (VTE_TERMINAL (self), "vte.ext.herdr.preview");
++}
++
+ static void
+ ptyxis_terminal_snapshot (GtkWidget   *widget,
+                           GtkSnapshot *snapshot)
+@@ -1134,6 +1293,15 @@
+                                                gtk_widget_get_width (widget) + 4,
+                                                padding.top + gtk_widget_get_height (widget) + padding.bottom));
+   ptyxis_terminal_rewrite_snapshot (widget, snapshot);
++  if (self->preview)
++    {
++      float sx = self->raster_cw ? (float) self->cell_width / self->raster_cw : 1;
++      float sy = self->raster_ch ? (float) self->cell_height / self->raster_ch : 1;
++      gtk_snapshot_append_texture (snapshot, self->preview,
++                                   &GRAPHENE_RECT_INIT (self->preview_x * sx, self->preview_y * sy,
++                                                        gdk_texture_get_width (self->preview) * sx,
++                                                        gdk_texture_get_height (self->preview) * sy));
++    }
+   gtk_snapshot_pop (snapshot);
+ 
+   gtk_widget_snapshot_child (widget, GTK_WIDGET (self->size_revealer), snapshot);
+@@ -1186,6 +1354,7 @@
+ 
+   self->cell_width = width;
+   self->cell_height = height;
++  herdr_metrics_update (self);
+ }
+ 
+ static void
+@@ -1222,6 +1391,15 @@
+ 
+   g_debug ("Disposing %s @ %p", G_OBJECT_TYPE_NAME (self), object);
+ 
++  if (self->metrics_fd >= 0)
++    {
++      close (self->metrics_fd);
++      self->metrics_fd = -1;
++      g_unlink (self->metrics_path);
++      g_clear_pointer (&self->metrics_path, g_free);
++    }
++  g_clear_handle_id (&self->preview_idle, g_source_remove);
++  g_clear_object (&self->preview);
+   gtk_widget_dispose_template (GTK_WIDGET (self), PTYXIS_TYPE_TERMINAL);
+ 
+   g_clear_object (&self->palette);
+@@ -1429,6 +1607,7 @@
+ 
+   g_set_object (&self->shortcuts, shortcuts);
+ 
++  self->metrics_fd = -1;
+   gtk_widget_init_template (GTK_WIDGET (self));
+ 
+   g_signal_connect_object (shortcuts,
+@@ -1452,6 +1631,11 @@
+                                       GDK_ACTION_MOVE));
+   gtk_drop_target_async_set_formats (self->drop_target, formats);
+ 
++  g_signal_connect_swapped (self, "notify::pty", G_CALLBACK (herdr_metrics_attach), self);
++  g_signal_connect_swapped (self, "realize", G_CALLBACK (herdr_metrics_realize), self);
++  g_signal_connect (self, "termprop-changed::vte.ext.herdr.preview", G_CALLBACK (herdr_preview_changed), NULL);
++  g_signal_connect_swapped (self, "child-exited", G_CALLBACK (herdr_preview_clear), self);
++  g_signal_connect_swapped (self, "termprop-changed::" VTE_TERMPROP_SHELL_PRECMD, G_CALLBACK (herdr_preview_clear), self);
+   g_signal_connect (self,
+                     "termprop-changed::" VTE_TERMPROP_SHELL_PRECMD,
+                     G_CALLBACK (ptyxis_terminal_emit_shell_precmd),

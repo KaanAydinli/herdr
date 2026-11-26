@@ -15,6 +15,8 @@ use crate::terminal::TerminalRuntimeRegistry;
 
 pub(crate) mod output;
 pub(crate) mod surface;
+#[cfg(target_os = "linux")]
+pub(crate) mod vte;
 
 pub(crate) use output::{GraphicsOperation, GraphicsOutput};
 use std::sync::Arc;

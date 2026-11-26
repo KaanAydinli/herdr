@@ -90,6 +90,15 @@ fn current_terminal_geometry(
     reported_cell_size: &AtomicU64,
     last_cell_size: Option<(u32, u32)>,
 ) -> io::Result<TerminalGeometry> {
+    #[cfg(target_os = "linux")]
+    if pixel_geometry_enabled && pixel_geometry_fallback {
+        if let Some((w, h)) = crate::platform::vte_preview::raster_cell() {
+            let (columns, rows) = crate::platform::terminal_grid_size()?;
+            // VTE mouse coordinates are logical pixels. Use grid mouse reports
+            // when publishing device-pixel dimensions to the workspace PTYs.
+            return Ok((columns, rows, w, h, false));
+        }
+    }
     current_terminal_geometry_with(
         pixel_geometry_enabled,
         pixel_geometry_fallback,

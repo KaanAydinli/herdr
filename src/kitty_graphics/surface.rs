@@ -209,6 +209,10 @@ impl GridPiece {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ClientState {
+    #[cfg(target_os = "linux")]
+    use_vte: bool,
+    #[cfg(target_os = "linux")]
+    vte_scene: Vec<super::vte::Layer>,
     scope: String,
     scene: SurfaceGraphicsScene,
     display_scene: SurfaceGraphicsScene,
@@ -223,7 +227,11 @@ pub(crate) struct ClientState {
 
 impl ClientState {
     pub(crate) fn new() -> Self {
-        Self::default()
+        Self {
+            #[cfg(target_os = "linux")]
+            use_vte: crate::platform::vte_preview::enabled(),
+            ..Self::default()
+        }
     }
 
     fn image_id(&self, key: &SurfaceGraphicsAssetKey) -> u32 {
@@ -324,6 +332,8 @@ impl ClientState {
     }
 
     pub(crate) fn take_pending_cleanup(&mut self) -> Vec<u8> {
+        #[cfg(target_os = "linux")]
+        let reset_vte = self.reset_pending && !self.vte_scene.is_empty();
         let mut bytes = if self.reset_pending {
             self.reset_pending = false;
             self.stale_images.clear();
@@ -331,6 +341,11 @@ impl ClientState {
         } else {
             Vec::new()
         };
+        #[cfg(target_os = "linux")]
+        if reset_vte {
+            self.vte_scene.clear();
+            bytes.extend_from_slice(crate::platform::vte_preview::CLEAR);
+        }
         self.forced_delete_images.sort_unstable();
         self.forced_delete_images.dedup();
         for image_id in self.forced_delete_images.drain(..) {
@@ -499,6 +514,11 @@ impl ClientState {
                 .retain(|(id, _)| *id != image_id);
         }
         if !cell_size.is_known() || self.scope.is_empty() {
+            #[cfg(target_os = "linux")]
+            if !self.vte_scene.is_empty() {
+                self.vte_scene.clear();
+                bytes.extend_from_slice(crate::platform::vte_preview::CLEAR);
+            }
             bytes.extend(self.host.clear_bytes());
             return GraphicsOutput::from_bytes(bytes);
         }
@@ -534,6 +554,21 @@ impl ClientState {
             })
             .collect::<Vec<_>>();
         let mut output = GraphicsOutput::from_bytes(bytes);
+        #[cfg(target_os = "linux")]
+        if self.use_vte {
+            let mut layers: Vec<_> = placements
+                .iter()
+                .filter_map(super::vte::Layer::from_host)
+                .collect();
+            layers.sort_by_key(|l| l.z);
+            if self.vte_scene != layers {
+                self.vte_scene = layers.clone();
+                output
+                    .operations
+                    .push(super::GraphicsOperation::VteScene(layers));
+            }
+            return output;
+        }
         self.host.request_placement_replay();
         output.extend(encode_graphics_output(&mut self.host, &placements));
         output

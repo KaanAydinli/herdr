@@ -45,6 +45,8 @@ pub(super) fn write_composed_frame(
     writer.write_all(b"\x1b7")?;
     for operation in &graphics.operations {
         match operation {
+            #[cfg(target_os = "linux")]
+            GraphicsOperation::VteScene(layers) => files.vte.write(&mut writer, layers)?,
             GraphicsOperation::Bytes(bytes) => {
                 record_received_kitty_graphics(bytes);
                 writer.write_all(bytes)?;

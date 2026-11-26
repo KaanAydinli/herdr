@@ -27,6 +27,7 @@ pub(crate) use super::unix_common::{
 mod config_file_tests;
 
 mod shutdown;
+pub(crate) mod vte_preview;
 pub(crate) use shutdown::monitor_host_shutdown;
 
 const WSL_MARKER_ENV_VARS: &[&str] = &["WSL_DISTRO_NAME", "WSL_INTEROP"];

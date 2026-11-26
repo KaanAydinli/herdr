@@ -6,7 +6,12 @@ use std::sync::Arc;
 #[derive(Clone, Debug)]
 pub(crate) enum GraphicsOperation {
     Bytes(Vec<u8>),
-    Upload { control: String, data: Arc<[u8]> },
+    #[cfg(target_os = "linux")]
+    VteScene(Vec<super::vte::Layer>),
+    Upload {
+        control: String,
+        data: Arc<[u8]>,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -40,6 +45,8 @@ impl GraphicsOutput {
         let mut bytes = Vec::new();
         for operation in self.operations {
             match operation {
+                #[cfg(target_os = "linux")]
+                GraphicsOperation::VteScene(_) => {}
                 GraphicsOperation::Bytes(next) if bytes.is_empty() => bytes = next,
                 GraphicsOperation::Bytes(next) => bytes.extend(next),
                 GraphicsOperation::Upload { control, data } => {

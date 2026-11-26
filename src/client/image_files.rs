@@ -11,6 +11,8 @@ use std::path::PathBuf;
 
 #[derive(Default)]
 pub(crate) struct FileTransport {
+    #[cfg(target_os = "linux")]
+    pub(super) vte: crate::platform::vte_preview::Presenter,
     #[cfg(unix)]
     inner: Option<crate::platform::unix_image_files::Ledger>,
 }
@@ -19,12 +21,16 @@ impl FileTransport {
     #[cfg(all(test, unix))]
     pub(crate) fn for_test(root: PathBuf) -> Self {
         Self {
+            #[cfg(target_os = "linux")]
+            vte: Default::default(),
             inner: Some(crate::platform::unix_image_files::Ledger::for_test(root)),
         }
     }
 
     pub(crate) fn from_environment() -> Self {
         Self {
+            #[cfg(target_os = "linux")]
+            vte: Default::default(),
             #[cfg(unix)]
             inner: environment_allows().then(crate::platform::unix_image_files::Ledger::new),
         }
