@@ -7,11 +7,13 @@ fn host_appearance_prefers_explicit_reports_over_background_inference() {
 
     let light = crate::app::client_palette_for_appearance(
         &state.config.theme_runtime,
-        crate::terminal_theme::HostAppearance::Light,
+        Some(crate::terminal_theme::HostAppearance::Light),
+        &crate::terminal_theme::TerminalTheme::default(),
     );
     let dark = crate::app::client_palette_for_appearance(
         &state.config.theme_runtime,
-        crate::terminal_theme::HostAppearance::Dark,
+        Some(crate::terminal_theme::HostAppearance::Dark),
+        &crate::terminal_theme::TerminalTheme::default(),
     );
 
     let inferred = state.handle_raw_events(vec![RawInputEvent::HostDefaultColor {
@@ -74,6 +76,169 @@ fn host_appearance_prefers_explicit_reports_over_background_inference() {
         Some(crate::terminal_theme::HostAppearance::Dark)
     );
     assert_eq!(state.config.palette, dark);
+}
+
+#[test]
+fn terminal_theme_refreshes_from_host_reports_without_auto_switch_and_keeps_overrides() {
+    use crate::terminal_theme::{DefaultColorKind, RgbColor};
+    use ratatui::style::Color;
+
+    let config: Config = toml::from_str(
+        r##"
+[theme]
+name = "terminal"
+[theme.custom]
+overlay0 = "#123456"
+"##,
+    )
+    .unwrap();
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    let background = RgbColor {
+        r: 255,
+        g: 249,
+        b: 232,
+    };
+    let foreground = RgbColor {
+        r: 69,
+        g: 55,
+        b: 60,
+    };
+    let surface = RgbColor {
+        r: 94,
+        g: 82,
+        b: 82,
+    };
+    let accent = RgbColor {
+        r: 66,
+        g: 106,
+        b: 121,
+    };
+    let initial = state.config.palette.clone();
+    state.handle_raw_events(vec![RawInputEvent::HostPaletteColors {
+        colors: vec![(4, accent), (8, surface), (7, background)],
+    }]);
+    assert_eq!(state.config.palette, initial);
+
+    let outcome = state.handle_raw_events(vec![
+        RawInputEvent::HostDefaultColor {
+            kind: DefaultColorKind::Background,
+            color: background,
+        },
+        RawInputEvent::HostDefaultColor {
+            kind: DefaultColorKind::Foreground,
+            color: foreground,
+        },
+    ]);
+    assert!(outcome.repaint);
+    assert_eq!(state.config.palette.overlay0, Color::Rgb(0x12, 0x34, 0x56));
+    assert_ne!(state.config.palette, initial);
+    let resolved = state.config.palette.clone();
+
+    let updated = state.handle_raw_events(vec![RawInputEvent::HostPaletteColors {
+        colors: vec![(4, background), (8, foreground)],
+    }]);
+    assert!(updated.repaint);
+    assert_ne!(state.config.palette, resolved);
+    assert_eq!(state.config.palette.overlay0, Color::Rgb(0x12, 0x34, 0x56));
+}
+
+#[test]
+fn settings_theme_only_previews_user_choices_and_cancel_follows_current_appearance() {
+    use crate::terminal_theme::HostAppearance;
+
+    let config: Config = toml::from_str(
+        r#"
+[theme]
+name = "catppuccin"
+auto_switch = true
+light_name = "catppuccin-latte"
+dark_name = "catppuccin"
+"#,
+    )
+    .unwrap();
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    let appearance = |value| vec![RawInputEvent::HostColorSchemeChanged(value)];
+    state.handle_raw_events(appearance(HostAppearance::Light));
+    let light = state.config.palette.clone();
+    state.open_settings_overlay();
+    state.handle_raw_events(appearance(HostAppearance::Light));
+    assert_eq!(state.config.palette, light);
+
+    let select = |name| {
+        crate::config::THEME_NAMES
+            .iter()
+            .position(|candidate| *candidate == name)
+            .unwrap()
+    };
+    // Selecting the original manual name is still a deliberate preview under auto-switch.
+    state.select_settings_choice(select("catppuccin"));
+    let manual = state.config.palette.clone();
+    assert_ne!(manual, light);
+    state.handle_raw_events(appearance(HostAppearance::Light));
+    assert_eq!(state.config.palette, manual);
+
+    state.select_settings_choice(select("dracula"));
+    let preview = state.config.palette.clone();
+    state.select_settings_section(
+        ClientSettingsSection::Sound,
+        &mut ClientShellInput::default(),
+    );
+    let mut config = config;
+    config.ui.sound.enabled = false;
+    state.config.apply_live_config(&config, &[], &[]);
+    state.refresh_host_palette();
+    assert_eq!(state.config.palette, preview);
+    assert_eq!(state.config.theme_name, "dracula");
+    assert!(!state.config.sound_enabled);
+    state.handle_raw_events(appearance(HostAppearance::Dark));
+    assert_eq!(state.config.palette, preview);
+    state.cancel_settings_overlay();
+    assert_eq!(state.config.palette, manual);
+}
+
+#[test]
+fn settings_cancel_after_config_reload_keeps_rollback_name_and_palette_together() {
+    use crate::terminal_theme::HostAppearance;
+
+    for auto_switch in [false, true] {
+        let mut config = Config::default();
+        config.theme.name = Some("catppuccin".into());
+        config.theme.auto_switch = auto_switch;
+        config.theme.light_name = Some("catppuccin-latte".into());
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+        state.handle_raw_events(vec![RawInputEvent::HostColorSchemeChanged(
+            HostAppearance::Light,
+        )]);
+        state.open_settings_overlay();
+        let preview_index = crate::config::THEME_NAMES
+            .iter()
+            .position(|name| *name == "dracula")
+            .unwrap();
+        state.select_settings_choice(preview_index);
+        let preview = state.config.palette.clone();
+
+        config.theme.name = Some("nord".into());
+        config.theme.light_name = Some("one-light".into());
+        state.config.apply_live_config(&config, &[], &[]);
+        state.refresh_host_palette();
+        assert_eq!(state.config.theme_name, "dracula");
+        assert_eq!(state.config.palette, preview);
+
+        state.cancel_settings_overlay();
+        assert_eq!(state.config.theme_name, "nord");
+        let expected = crate::app::client_palette_for_appearance(
+            &state.config.theme_runtime,
+            Some(HostAppearance::Light),
+            &state.host_theme,
+        );
+        assert_eq!(state.config.palette, expected);
+
+        state.open_settings_overlay();
+        let Some(ClientShellOverlay::Settings(settings)) = state.overlay.as_ref() else {
+            panic!("expected Settings to reopen");
+        };
+        assert_eq!(crate::config::THEME_NAMES[settings.selected], "nord");
+    }
 }
 
 #[test]
@@ -240,35 +405,55 @@ fn client_shell_graphics_follow_final_shell_origin_and_local_overlay_visibility(
 
 #[test]
 fn delayed_link_fallback_does_not_replay_against_changed_geometry() {
-    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
-    state.set_snapshot(Box::new(snapshot()));
-    state.set_pane_surface(surface());
-    state.compose(106, 20).expect("pane frame");
-    let pane = state.hits.panes[0].clone();
-    let down = MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left),
-        column: pane.inner_rect.x + 2,
-        row: pane.inner_rect.y + 1,
-        modifiers: KeyModifiers::CONTROL,
-    };
-    let activate = state.handle_raw_events(vec![RawInputEvent::Mouse(down)]);
-    let request_id = match &activate.actions[..] {
-        [ClientShellAction::Endpoint { request, .. }] => request.id.clone(),
-        _ => panic!("expected link activation request"),
-    };
-    state.hits.panes[0].inner_rect.x = state.hits.panes[0].inner_rect.x.saturating_add(1);
-
-    let (_, actions) = state.handle_endpoint_result(
-        "boot-1",
-        &request_id,
-        Ok(crate::api::schema::ResponseResult::PaneLinkActivated {
-            url: None,
-            handled: false,
-        }),
-    );
-
-    assert!(actions.is_empty());
-    assert!(state.url_click_consumes_until_up);
+    for url in [
+        None,
+        Some("https://example.test"),
+        Some("file:///C:/Code/note.md"),
+    ] {
+        for changed in 0..4 {
+            let mut state =
+                ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+            state.set_snapshot(Box::new(snapshot()));
+            state.set_pane_surface(surface());
+            state.compose(106, 20).expect("pane frame");
+            let pane = state.hits.panes[0].clone();
+            let down = MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: pane.inner_rect.x + 2,
+                row: pane.inner_rect.y + 1,
+                modifiers: KeyModifiers::CONTROL,
+            };
+            let activate = state.handle_raw_events(vec![RawInputEvent::Mouse(down)]);
+            let [ClientShellAction::Endpoint { request, .. }] = &activate.actions[..] else {
+                panic!("expected link activation request");
+            };
+            match changed {
+                0 => state.hits.panes[0].inner_rect.x += 1,
+                1 => state.mode = ClientShellMode::Navigate,
+                2 => state.config.mouse_capture = false,
+                _ => {
+                    state.overlay = Some(ClientShellOverlay::Help(ClientHelpOverlay {
+                        query: TextEditor::default(),
+                        search_focused: false,
+                        scroll: 0,
+                    }))
+                }
+            }
+            let (_, actions) = state.handle_endpoint_result(
+                "boot-1",
+                &request.id,
+                Ok(crate::api::schema::ResponseResult::PaneLinkActivated {
+                    url: url.map(str::to_owned),
+                    handled: false,
+                }),
+            );
+            assert!(
+                actions.is_empty(),
+                "late replies must not replay or open links"
+            );
+            assert!(state.url_click_consumes_until_up);
+        }
+    }
 }
 
 #[test]
@@ -280,6 +465,216 @@ fn invalid_experimental_reload_keeps_input_source_preference() {
     assert!(shell.switch_ascii_input_source_in_prefix);
     shell.apply_live_config(&config, &[], &[]);
     assert!(!shell.switch_ascii_input_source_in_prefix);
+}
+
+fn pane_key_events(
+    outcome: &ClientShellInput,
+) -> Vec<(
+    crate::protocol::ClientKeyCode,
+    crate::protocol::ClientKeyKind,
+)> {
+    outcome
+        .requests
+        .iter()
+        .filter_map(|request| match request {
+            ClientMessage::ClientShellPaneInput { events, .. } => Some(events),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|event| match event {
+            ClientPaneInputEvent::Key { code, kind, .. } => Some((code.clone(), *kind)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn text_press_release_survives_shift_released_first_and_never_becomes_a_repeat() {
+    use crate::protocol::{ClientKeyCode, ClientKeyKind};
+
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_host_reports_key_releases(true);
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+
+    // Shift+A arrives as text; Shift is let go before A, so the release names
+    // plain `a` with no shifted alternate.
+    let press = state.handle_input_bytes(b"A");
+    assert_eq!(
+        pane_key_events(&press),
+        [(ClientKeyCode::Char('A'), ClientKeyKind::Press)]
+    );
+    let release = state.handle_input_bytes(b"\x1b[97;1:3u");
+    assert_eq!(
+        pane_key_events(&release),
+        [(ClientKeyCode::Char('a'), ClientKeyKind::Release)]
+    );
+
+    // A text press whose release never arrived must not turn the next press
+    // into a repeat routed to the old target.
+    let _ = state.handle_input_bytes(b"%");
+    let again = state.handle_input_bytes(b"%");
+    assert_eq!(
+        pane_key_events(&again),
+        [(ClientKeyCode::Char('%'), ClientKeyKind::Press)]
+    );
+}
+
+#[test]
+fn raw_backspace_follows_the_host_tty_erase_character() {
+    use crate::protocol::{ClientKeyCode, ClientKeyKind};
+
+    // #3244: MobaXterm sends 0x08 for Backspace and its tty says erase is ^H.
+    for (erase, plain, alt) in [
+        (
+            Some(0x08),
+            ClientKeyCode::Backspace,
+            ClientKeyCode::Backspace,
+        ),
+        (
+            Some(0x7f),
+            ClientKeyCode::Char('h'),
+            ClientKeyCode::Char('h'),
+        ),
+        (None, ClientKeyCode::Char('h'), ClientKeyCode::Char('h')),
+    ] {
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+        state.set_host_erase_byte(erase);
+        state.set_snapshot(Box::new(snapshot()));
+        state.set_pane_surface(surface());
+
+        let press = state.handle_input_bytes(b"\x08");
+        assert_eq!(
+            pane_key_events(&press),
+            [(plain.clone(), ClientKeyKind::Press)],
+            "erase {erase:?}"
+        );
+        let alt_press = state.handle_input_bytes(b"\x1b\x08");
+        assert_eq!(
+            pane_key_events(&alt_press),
+            [(alt, ClientKeyKind::Press)],
+            "alt, erase {erase:?}"
+        );
+    }
+}
+
+#[test]
+fn shifted_punctuation_release_after_shift_reaches_the_pane() {
+    use crate::protocol::{ClientKeyCode, ClientKeyKind};
+
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_host_reports_key_releases(true);
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+
+    // "?" arrives as text; with Shift let go first the release names only the
+    // unshifted key, which no layout-free rule can relate to "?".
+    let _ = state.handle_input_bytes(b"?");
+    let release = state.handle_input_bytes(b"\x1b[47;1:3u");
+    assert_eq!(
+        pane_key_events(&release),
+        [(ClientKeyCode::Char('/'), ClientKeyKind::Release)]
+    );
+    // Nothing is left to be released later as a stale "?".
+    let blur = state.handle_input_bytes(b"\x1b[O");
+    assert!(pane_key_events(&blur).is_empty());
+
+    // With two text keys held the release is ambiguous and nothing is taken.
+    let _ = state.handle_input_bytes(b"?");
+    let _ = state.handle_input_bytes(b"!");
+    let ambiguous = state.handle_input_bytes(b"\x1b[47;1:3u");
+    assert!(pane_key_events(&ambiguous).is_empty());
+}
+
+#[test]
+fn held_key_reports_keep_their_release_around_ime_commits_and_focus_loss() {
+    use crate::protocol::{ClientKeyCode, ClientKeyKind};
+
+    let new_state = || {
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+        state.set_host_reports_key_releases(true);
+        state.set_snapshot(Box::new(snapshot()));
+        state.set_pane_surface(surface());
+        state
+    };
+
+    // A key report carrying its text (report-all host) is a real held key:
+    // losing focus releases it.
+    let mut state = new_state();
+    let _ = state.handle_input_bytes(b"\x1b[97;;97u");
+    let blur = state.handle_input_bytes(b"\x1b[O");
+    assert_eq!(
+        pane_key_events(&blur),
+        [(ClientKeyCode::Char('a'), ClientKeyKind::Release)]
+    );
+
+    // Many IME commits while a key is held never displace that key: its
+    // release still reaches the pane as the held key.
+    let mut state = new_state();
+    let _ = state.handle_input_bytes(b"\x1b[120;;120u");
+    for ch in
+        "\u{65e5}\u{672c}\u{8a9e}\u{d55c}\u{ad6d}\u{c5b4}\u{4e2d}\u{6587}\u{3042}\u{3044}\u{3046}"
+            .chars()
+    {
+        let _ = state.handle_input_bytes(ch.to_string().as_bytes());
+    }
+    let release = state.handle_input_bytes(b"\x1b[120;1:3u");
+    assert_eq!(
+        pane_key_events(&release),
+        [(ClientKeyCode::Char('x'), ClientKeyKind::Release)]
+    );
+}
+
+#[test]
+fn non_latin_ctrl_chord_release_matches_after_ctrl_is_let_go() {
+    use crate::protocol::{ClientKeyCode, ClientKeyKind};
+
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_host_reports_key_releases(true);
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+
+    // Russian layout: Ctrl+\u{441} is the C key; Ctrl goes up before C.
+    let press = state.handle_input_bytes(b"\x1b[1089::99;5u");
+    assert_eq!(
+        pane_key_events(&press),
+        [(ClientKeyCode::Char('c'), ClientKeyKind::Press)]
+    );
+    let release = state.handle_input_bytes(b"\x1b[1089::99;1:3u");
+    assert_eq!(
+        pane_key_events(&release),
+        [(ClientKeyCode::Char('c'), ClientKeyKind::Release)]
+    );
+
+    // Plain Cyrillic typing still releases as its own key.
+    let _ = state.handle_input_bytes(b"\x1b[1089::99;;1089u");
+    let release = state.handle_input_bytes(b"\x1b[1089::99;1:3u");
+    assert_eq!(
+        pane_key_events(&release),
+        [(ClientKeyCode::Char('\u{441}'), ClientKeyKind::Release)]
+    );
+}
+
+#[test]
+fn unmatched_release_never_takes_a_held_key_while_herdr_owns_another_press() {
+    use crate::protocol::{ClientKeyCode, ClientKeyKind};
+
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_host_reports_key_releases(true);
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+
+    // Hold `a` in the pane, then press the prefix: Herdr owns that press.
+    let _ = state.handle_input_bytes(b"a");
+    let _ = state.handle_input_bytes(b"\x1b[98;5u");
+    // A release the leases cannot name must not be charged to the held `a`.
+    let stray = state.handle_input_bytes(b"\x1b[47;1:3u");
+    assert!(pane_key_events(&stray).is_empty());
+    let release = state.handle_input_bytes(b"\x1b[97;1:3u");
+    assert_eq!(
+        pane_key_events(&release),
+        [(ClientKeyCode::Char('a'), ClientKeyKind::Release)]
+    );
 }
 
 #[test]
@@ -629,26 +1024,79 @@ fn rename_pane_empty_value_is_preserved_as_a_clear_request() {
 
 #[test]
 fn styled_client_composition_preserves_pane_hyperlinks() {
-    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
-    state.set_snapshot(Box::new(snapshot()));
-    let mut pane_surface = surface();
-    let linked = Buffer::with_lines(["LIVE", "PANE"]);
-    pane_surface.frame = FrameData::from_ratatui_buffer_with_hyperlinks(
-        &linked,
-        None,
-        &[((0, 0), "L".into(), "https://example.test".into())],
-    );
-    state.set_pane_surface(pane_surface);
-    let mut selection =
-        crate::selection::Selection::absolute_range("pane_1".to_owned(), (0, 0), (0, 1));
-    assert!(selection.finish());
-    state.selection = Some(selection);
-    let frame = state.compose(106, 20).expect("composed frame");
-    let hit = &state.hits.panes[0];
-    let index =
-        usize::from(hit.inner_rect.y) * usize::from(frame.width) + usize::from(hit.inner_rect.x);
-    let link = frame.cells[index].hyperlink.expect("linked cell") as usize;
-    assert_eq!(frame.hyperlinks[link], "https://example.test");
+    for uri in [
+        "https://example.test",
+        "obsidian://open?vault=meta&file=note.md",
+    ] {
+        for draw_host_cursor in [false, true] {
+            let mut state =
+                ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+            state.set_snapshot(Box::new(snapshot()));
+            let mut pane_surface = surface();
+            let linked = Buffer::with_lines(["LIVE", "PANE"]);
+            pane_surface.frame = FrameData::from_ratatui_buffer_with_hyperlinks(
+                &linked,
+                None,
+                &[((0, 0), "L".into(), uri.into())],
+            );
+            state.set_pane_surface(pane_surface);
+            let mut selection =
+                crate::selection::Selection::absolute_range("pane_1".to_owned(), (0, 0), (0, 1));
+            assert!(selection.finish());
+            state.selection = Some(selection);
+            let frame = state.compose(106, 20).expect("composed frame");
+            let hit = &state.hits.panes[0];
+            let index = usize::from(hit.inner_rect.y) * usize::from(frame.width)
+                + usize::from(hit.inner_rect.x);
+            let link = frame.cells[index].hyperlink.expect("linked cell") as usize;
+            assert_eq!(frame.hyperlinks[link], uri);
+            let x = hit.inner_rect.x;
+            let y = hit.inner_rect.y;
+            let mut client = crate::client::state::ClientState::test_new();
+            client.draw_host_cursor = draw_host_cursor;
+            let mut terminal = crate::ghostty::Terminal::new(106, 20, 0).unwrap();
+            for (phase, (capture, repaint)) in [
+                (false, false),
+                (true, false),
+                (false, false),
+                (true, true),
+                (true, false),
+                (false, true),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                client.shell_mouse_capture_preference = capture;
+                // Effective mouse reporting may still be requested by a pane app.
+                client.mouse_capture_active = true;
+                client.repaint_pending = repaint;
+                let mut frame = state.compose(106, 20).expect("linked semantic frame");
+                let link = frame.cells[index].hyperlink.expect("retained link") as usize;
+                assert_eq!(frame.hyperlinks[link], uri);
+                // Change the linked cell on the diff pass so it must be painted again.
+                if phase == 4 {
+                    frame.frame.cells[index].symbol = "D".into();
+                }
+                frame.frame.cursor = Some(crate::protocol::CursorState {
+                    x: x + 1,
+                    y,
+                    visible: true,
+                    shape: Default::default(),
+                });
+                let expected = frame.cells[index].symbol.clone();
+                let mut output = Vec::new();
+                assert!(client.try_present_frame_to(&mut output, frame));
+                terminal.write(&output);
+                assert_eq!(
+                    terminal.viewport_hyperlink_uri(x, u32::from(y)).unwrap(),
+                    (!capture).then_some(uri.to_owned()),
+                    "host link ownership must follow configured capture for {uri}"
+                );
+                let (_, label) = terminal.screen_cell(x, u32::from(y)).unwrap();
+                assert_eq!(label, expected.chars().map(u32::from).collect::<Vec<_>>());
+            }
+        }
+    }
 }
 
 #[test]
@@ -674,4 +1122,97 @@ fn every_configured_prefix_enters_prefix_mode() {
         ))]);
         assert_eq!(state.mode, ClientShellMode::Terminal);
     }
+}
+
+fn pane_text_commits(outcome: &ClientShellInput) -> Vec<String> {
+    outcome
+        .requests
+        .iter()
+        .filter_map(|request| match request {
+            ClientMessage::ClientShellPaneInput { events, .. } => Some(events),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|event| match event {
+            ClientPaneInputEvent::TextCommit(text) => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A Kitty host that Herdr switched to report-all for prefix or navigate
+/// mode. Plain text can still arrive: Tern ignores report-all, IMEs commit
+/// text, and Ghostty `text:` binds type their bytes (#5255).
+fn report_all_kitty_host_state(snapshot: crate::protocol::ClientShellSnapshot) -> ClientShellState {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_host_reports_key_releases(true);
+    state.set_host_reports_all_keys(true);
+    state.set_snapshot(Box::new(snapshot));
+    state.set_pane_surface(surface());
+    state
+}
+
+#[test]
+fn plain_text_after_the_prefix_runs_the_prefix_binding_on_a_report_all_host() {
+    // Prefix as a key report, then a plain `q` (Tern, IME commit).
+    let mut state = report_all_kitty_host_state(snapshot());
+    let _ = state.handle_input_bytes(b"\x1b[98;5u");
+    assert_eq!(state.mode, ClientShellMode::Prefix);
+    let detach = state.handle_input_bytes(b"q");
+    assert!(detach.detach, "plain q after a reported prefix must detach");
+    assert!(pane_text_commits(&detach).is_empty());
+
+    // Raw prefix byte and the key in one write (Ghostty `text:` bind).
+    let mut state = report_all_kitty_host_state(snapshot());
+    let detach = state.handle_input_bytes(b"\x02q");
+    assert!(detach.detach, "one-write ^B q must detach");
+    assert!(pane_text_commits(&detach).is_empty());
+}
+
+#[test]
+fn plain_text_in_navigate_mode_runs_the_navigate_binding_on_a_report_all_host() {
+    let mut snapshot = snapshot();
+    let mut second = snapshot.workspaces[0].clone();
+    second.workspace_id = "ws_2".into();
+    second.number = 2;
+    second.label = "second".into();
+    second.focused = false;
+    snapshot.workspaces.push(second);
+    let mut state = report_all_kitty_host_state(snapshot);
+
+    let _ = state.handle_input_bytes(b"\x1b[98;5u");
+    let _ = state.handle_input_bytes(b"\x1b[119u");
+    assert_eq!(state.mode, ClientShellMode::Navigate);
+    let jump = state.handle_input_bytes(b"2");
+    assert!(
+        jump.actions.iter().any(|action| matches!(
+            action,
+            ClientShellAction::Endpoint { request, .. }
+                if matches!(
+                    &request.method,
+                    crate::api::schema::Method::WorkspaceFocus(target)
+                        if target.workspace_id == "ws_2"
+                )
+        )),
+        "plain 2 in navigate mode must focus workspace 2"
+    );
+}
+
+#[test]
+fn committed_text_still_reaches_a_report_all_pane_as_text() {
+    // The #5017 behavior #5255 must keep: in a pane that asked for every key,
+    // IME and compose commits arrive as text, not invented key reports.
+    let mut state = report_all_kitty_host_state(snapshot());
+    assert_eq!(state.mode, ClientShellMode::Terminal);
+    let cjk = state.handle_input_bytes("\u{4f60}\u{597d}".as_bytes());
+    assert_eq!(pane_text_commits(&cjk).concat(), "\u{4f60}\u{597d}");
+    let ascii = state.handle_input_bytes(b"n");
+    assert_eq!(pane_text_commits(&ascii), ["n"]);
+
+    // And after leaving prefix mode the pane gets text commits again.
+    let _ = state.handle_input_bytes(b"\x1b[98;5u");
+    let _ = state.handle_input_bytes(b"\x1b");
+    assert_eq!(state.mode, ClientShellMode::Terminal);
+    let after = state.handle_input_bytes("\u{3042}".as_bytes());
+    assert_eq!(pane_text_commits(&after).concat(), "\u{3042}");
 }

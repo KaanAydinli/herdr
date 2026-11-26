@@ -16,6 +16,34 @@ pub(super) fn merged_config_diagnostic(
 }
 
 impl ClientShellState {
+    pub(super) fn refresh_host_palette(&mut self) -> bool {
+        let effective = crate::app::client_palette_for_appearance(
+            &self.config.theme_runtime,
+            self.host_appearance,
+            &self.host_theme,
+        );
+        let preview = if let Some(ClientShellOverlay::Settings(settings)) = self.overlay.as_mut() {
+            settings
+                .original_theme_name
+                .clone_from(&self.config.theme_runtime.manual_name);
+            settings.original_palette = effective.clone();
+            settings.theme_preview.as_deref()
+        } else {
+            None
+        };
+        let palette = if let Some(name) = preview {
+            self.config.theme_name = name.to_owned();
+            crate::app::client_palette_for_theme(&self.config.theme_runtime, name, &self.host_theme)
+        } else {
+            effective
+        };
+        if self.config.palette == palette {
+            return false;
+        }
+        self.config.palette = palette;
+        true
+    }
+
     pub(super) fn set_local_config_diagnostic(&mut self, diagnostic: Option<String>) {
         self.local_config_diagnostic = diagnostic;
         self.config_diagnostic = merged_config_diagnostic(
@@ -77,12 +105,7 @@ impl ClientShellState {
                     &loaded.diagnostics,
                     &loaded.invalid_sections,
                 );
-                if let Some(appearance) = self.host_appearance {
-                    self.config.palette = crate::app::client_palette_for_appearance(
-                        &self.config.theme_runtime,
-                        appearance,
-                    );
-                }
+                self.refresh_host_palette();
                 if !self.sidebar_width_manual {
                     self.sidebar_width = self.config.sidebar_width;
                 }
@@ -192,6 +215,31 @@ impl ClientShellConfig {
 
     pub(crate) fn with_local_endpoint(self, socket_path: &std::path::Path) -> Self {
         self.with_preferences_path(preferences::path_for_local_endpoint(socket_path))
+    }
+
+    pub(crate) fn with_process_endpoint_preferences(self, socket_path: &std::path::Path) -> Self {
+        self.with_endpoint_preferences(
+            socket_path,
+            std::env::var(crate::remote::REMOTE_PREFERENCES_ENV_VAR)
+                .ok()
+                .as_deref(),
+        )
+    }
+
+    pub(crate) fn with_endpoint_preferences(
+        self,
+        socket_path: &std::path::Path,
+        remote_identity: Option<&str>,
+    ) -> Self {
+        let identity = remote_identity
+            .and_then(|value| serde_json::from_str::<(String, String)>(value).ok())
+            .filter(|(target, session)| !target.is_empty() && !session.is_empty());
+        match identity {
+            Some((target, session)) => {
+                self.with_preferences_path(preferences::path_for_remote_endpoint(&target, &session))
+            }
+            None => self.with_local_endpoint(socket_path),
+        }
     }
 
     pub(super) fn with_preferences_path(mut self, path: std::path::PathBuf) -> Self {

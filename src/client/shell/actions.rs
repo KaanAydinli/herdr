@@ -112,6 +112,16 @@ impl ClientShellState {
                     outcome.repaint = true;
                     return;
                 }
+                if action == crate::input::KeybindAction::ClosePane {
+                    if let Some(pane_id) = self
+                        .snapshot
+                        .as_deref()
+                        .and_then(|snapshot| snapshot.focused_pane_id.clone())
+                    {
+                        self.request_pane_close(pane_id, outcome);
+                    }
+                    return;
+                }
                 if action == crate::input::KeybindAction::CloseTab {
                     if let Some(tab_id) = self
                         .snapshot
@@ -634,11 +644,10 @@ impl ClientShellState {
                     Ok(crate::api::schema::ResponseResult::PaneSelection { text, .. })
                         if !text.is_empty() =>
                     {
-                        let repaint = self.show_copy_feedback(std::time::Instant::now());
                         let bytes = text.clone().into_bytes();
                         self.last_copied_selection = Some(text);
                         (
-                            repaint,
+                            false,
                             vec![
                                 ClientShellAction::PrimarySelectionWrite(bytes.clone()),
                                 ClientShellAction::ClipboardWrite(bytes),
@@ -671,7 +680,8 @@ impl ClientShellState {
                     event.kind
                         == crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left)
                 });
-                let replay = (self.mode == ClientShellMode::Terminal
+                let replay = (self.config.mouse_capture
+                    && self.mode == ClientShellMode::Terminal
                     && self.overlay.is_none()
                     && self
                         .hits
@@ -699,7 +709,7 @@ impl ClientShellState {
                     Ok(crate::api::schema::ResponseResult::PaneLinkActivated {
                         url: Some(url),
                         handled: false,
-                    }) if crate::app::actions::safe_web_url(&url).is_some() => {
+                    }) if crate::app::actions::safe_web_url(&url).is_some() && replay.is_some() => {
                         self.url_click_consumes_until_up = completed_before_release;
                         (false, vec![ClientShellAction::OpenSafeWebUrl(url)])
                     }
@@ -709,6 +719,10 @@ impl ClientShellState {
                     Ok(_) => {
                         self.set_endpoint_error("endpoint returned an unexpected link result");
                         (true, replay_action(replay))
+                    }
+                    Err(error) if error.code.as_deref() == Some("plugin_link_failed") => {
+                        self.url_click_consumes_until_up = completed_before_release;
+                        (true, Vec::new())
                     }
                     Err(error)
                         if matches!(
@@ -1057,9 +1071,6 @@ impl ClientShellState {
                     env: Default::default(),
                 }))
             }
-            KeybindAction::ClosePane => Some(Method::PaneClose(PaneTarget {
-                pane_id: focused_pane.clone()?,
-            })),
             KeybindAction::CyclePaneNext | KeybindAction::CyclePanePrevious => {
                 let focused_tab = focused_tab?;
                 let panes = snapshot

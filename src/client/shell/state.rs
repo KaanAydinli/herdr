@@ -425,6 +425,7 @@ pub(super) struct ClientSettingsOverlay {
     pub(super) selected: usize,
     pub(super) original_theme_name: String,
     pub(super) original_palette: Palette,
+    pub(super) theme_preview: Option<String>,
     pub(super) integrations: Vec<crate::api::schema::IntegrationInfo>,
     pub(super) integration_messages: Vec<String>,
     pub(super) loading_integrations: bool,
@@ -576,6 +577,7 @@ pub(super) struct ClientContextMenuItem {
 
 #[derive(Debug)]
 pub(super) struct ClientTabCloseConfirmation {
+    pub(super) pane_id: Option<String>,
     pub(super) tab_id: String,
     pub(super) workspace: WorkspaceNavigationTarget,
 }
@@ -923,6 +925,15 @@ pub(crate) struct ClientShellState {
     pub(super) pane_mouse_gesture: Option<ClientPaneMouseGesture>,
     pub(super) link_hover: Option<super::link_hover::LinkHover>,
     pub(super) url_click_consumes_until_up: bool,
+    /// The host terminal reports key releases (Kitty event types), so text
+    /// presses can be tracked until their release arrives.
+    pub(super) host_reports_key_releases: bool,
+    /// The host tty's erase character is `^H`: a raw 0x08 is Backspace, not
+    /// Ctrl+H (MobaXterm, PuTTY-style terminals; tmux reads VERASE the same way).
+    pub(super) host_erase_is_ctrl_h: bool,
+    /// The focused pane asks for every key as an escape code, so Herdr pushed
+    /// report-all to the host; plain text input then reaches it as text.
+    pub(super) host_reports_all_keys: bool,
     pub(super) replaying_url_click: bool,
     pub(super) selection: Option<crate::selection::Selection<String>>,
     /// Text of the last pane selection Herdr copied. Middle-click paste falls back to it
@@ -963,7 +974,7 @@ pub(crate) struct ClientShellState {
     pub(super) pending_input_source_changes: Vec<bool>,
     pub(super) host_appearance: Option<crate::terminal_theme::HostAppearance>,
     pub(super) host_appearance_explicit: bool,
-    pub(super) host_background: Option<crate::terminal_theme::RgbColor>,
+    pub(super) host_theme: crate::terminal_theme::TerminalTheme,
     pub(super) local_config_diagnostic: Option<String>,
     pub(super) config_diagnostic: Option<String>,
     pub(super) endpoint_error: Option<String>,
@@ -1093,6 +1104,9 @@ impl ClientShellState {
             pane_mouse_gesture: None,
             link_hover: None,
             url_click_consumes_until_up: false,
+            host_reports_key_releases: false,
+            host_erase_is_ctrl_h: false,
+            host_reports_all_keys: false,
             replaying_url_click: false,
             selection: None,
             last_copied_selection: None,
@@ -1130,7 +1144,7 @@ impl ClientShellState {
             pending_input_source_changes: Vec::new(),
             host_appearance: None,
             host_appearance_explicit: false,
-            host_background: None,
+            host_theme: crate::terminal_theme::TerminalTheme::default(),
             config_diagnostic: local_config_diagnostic.clone(),
             local_config_diagnostic,
             endpoint_error: None,
